@@ -18,7 +18,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 import tensorflow as tf
 from tensorflow.keras import layers
-from tensorflow.keras import backend as K
+from tensorflow.python.keras import backend as K
 from tensorflow.keras.utils import plot_model
 
 import argparse
@@ -33,9 +33,11 @@ from layers import PositionLayer, MaskLayerLeft, \
 #tf.random.set_random_seed(seed);
 #np.random.seed(seed);
 
-config = tf.ConfigProto()
-config.gpu_options.allow_growth = True;
-K.set_session(tf.Session(config=config))
+# config = tf.ConfigProto()
+# config.gpu_options.allow_growth = True;
+# K.set_session(tf.Session(config=config))
+sess = tf.compat.v1.Session()
+K.set_session(sess)
 
 class suppress_stderr(object):
    def __init__(self):
@@ -64,7 +66,7 @@ MAX_PREDICT = 160;
 TOPK = 1;
 NUM_EPOCHS = 1000;
 
-BATCH_SIZE = 32
+BATCH_SIZE = 2
 N_HIDDEN = 512
 EMBEDDING_SIZE = 512;
 KEY_SIZE = 64;
@@ -189,7 +191,9 @@ def gen_data(data, progn = False):
                  z[cnt, i, 1] = 1;
 
         my[cnt, :i+1] =1;
-
+   
+    # data is in this format because
+    # we have multiple inputs [x1, x2, x3, x4], and one output y
     return [x, mx, y, my], z;
 
 
@@ -445,6 +449,7 @@ def validate(ftest, mdl_encoder, mdl_decoder, T, beam_size):
 def buildNetwork(n_block, n_self):
 
     print("Building network ...");
+    # input is by order
 
     #product
     l_in = layers.Input( shape= (None,));
@@ -488,9 +493,12 @@ def buildNetwork(n_block, n_self):
     #reagents
     l_dec = layers.Input(shape =(None,)) ;
     l_dmask = layers.Input(shape =(None,));
+    # decoder mask and source mask
+    # zero out contribution of padded positions from source
     l_emask = MaskLayerRight()([l_dmask, l_mask]);
 
     l_dpos = PositionLayer(EMBEDDING_SIZE)(l_dmask);
+    # for masking + covering triangle
     l_right_mask = MaskLayerTriangular()(l_dmask);
  
     #bottleneck
@@ -539,7 +547,7 @@ def buildNetwork(n_block, n_self):
     mdl = tf.keras.Model([l_in, l_mask, l_dec, l_dmask], l_out);
 
     def masked_loss(y_true, y_pred):
-       loss = tf.nn.softmax_cross_entropy_with_logits_v2(labels=y_true, logits=y_pred);
+       loss = tf.nn.softmax_cross_entropy_with_logits(labels=y_true, logits=y_pred);
        mask = tf.cast(tf.not_equal(tf.reduce_sum(y_true, -1), 0), 'float32');
        loss = tf.reduce_sum(loss * mask, -1) / tf.reduce_sum(mask, -1);
        loss = K.mean(loss);
@@ -552,7 +560,7 @@ def buildNetwork(n_block, n_self):
        eq = K.mean(eq);
        return eq;
 
-    mdl.compile(optimizer = 'adam', loss = masked_loss, metrics=['accuracy', masked_acc]);
+    mdl.compile(optimizer = 'adam', loss = masked_loss, metrics=['accuracy', masked_acc], run_eagerly=True);
     #mdl.summary();
 
     #Divide the graph for faster execution. First, we calculate encoder's values.
@@ -566,6 +574,7 @@ def buildNetwork(n_block, n_self):
     def mdl_decoder(res, product_encoded, product_mask, T = 1.0):
 
       v = gen_right([res]);
+      # do we start from l_encoder?
       d = l_out.eval( feed_dict = {l_encoder : product_encoded, l_dec : v[0],
                                    l_dmask : v[1], l_mask : product_mask, l_dpos : v[2]} );
       prob = d[0, len(res), :] / T;
@@ -656,7 +665,7 @@ def main():
            res = gen(mdl, t);
            print(t, " >> ", res);
 
-    printProgress();
+   #  printProgress();
 
     try:
         os.mkdir("storage");
@@ -686,7 +695,7 @@ def main():
              mdl.save_weights("final.h5", save_format="h5");
 
        def on_epoch_end(self, epoch, logs={}):
-          printProgress();
+         #  printProgress();
           #if epoch in epochs_to_save:
 
           mdl.save_weights("tr-" + str(epoch) + ".h5", save_format="h5");

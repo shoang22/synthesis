@@ -1,0 +1,8 @@
+.vscode/
+*.sh
+pretrained/
+temp/
+uspto-full/*
+uspto-mit/**/*
+**/__pycache__/
+uspto-50k/*

@@ -85,7 +85,8 @@ class MaskLayerTriangular(tf.keras.layers.Layer):
    def call(self, x):
 
       t = tf.ones(shape= (K.shape(x)[0], K.shape(x)[1], K.shape(x)[1]));
-      tri = tf.matrix_band_part(t, -1, 0);
+      # -1 keeps entire lower triangle
+      tri = tf.compat.v1.matrix_band_part(t, -1, 0);
 
       rank = tf.ones(shape=(1, K.shape(x)[1]), dtype='float32');
       y = K.expand_dims(x, axis=-1);
@@ -145,7 +146,8 @@ class SelfLayer(tf.keras.layers.Layer):
         A = A - tf.reduce_max(A, axis = 2, keepdims = True);
 
         A = tf.exp(A);
-
+        
+        # 
         A = A / tf.reshape( tf.reduce_sum(A, axis = 2), (-1, tf.shape(inputs[0])[1] ,1));
         A = layers.Dropout(rate = 0.1) (A);
 
