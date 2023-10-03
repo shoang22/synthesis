@@ -282,7 +282,7 @@ class AugmentedTransformer(nn.Module):
 
         self.generator = TimeDistributed(nn.Linear(embed_dim, tgt_vocab_size))
 
-    def forward(self, src, tgt, src_padding_mask, tgt_padding_mask):
+    def forward(self, src, tgt, src_padding_mask, tgt_padding_mask, **kwargs):
         src_pos = self.positional_encoding(src_padding_mask)
         src_mask = self.src_mask(src_padding_mask)
         src_embed = self.src_vocab_embed(src)
@@ -309,6 +309,37 @@ class AugmentedTransformer(nn.Module):
         output = self.decoder_norm(output)
 
         return self.generator(output)
+    
+    def encode(self, src, src_padding_mask):
+        src_pos = self.positional_encoding(src_padding_mask)
+        src_mask = self.src_mask(src_padding_mask)
+        src_embed = self.src_vocab_embed(src)
+        src_embed += src_pos
+
+        memory = src_embed
+
+        for block in self.encoder:
+            memory = block(memory, src_mask)
+        
+        return self.encoder_norm(memory)
+    
+    def decode(self, tgt, memory, src_padding_mask, tgt_padding_mask, T=1.0):
+        memory_mask = self.memory_mask([tgt_padding_mask, src_padding_mask])
+
+        tgt_pos = self.positional_encoding(tgt_padding_mask)
+        tgt_mask = self.tgt_mask(tgt_padding_mask)
+        tgt_embed = self.tgt_vocab_embed(tgt)
+        tgt_embed = self.dropout(tgt_embed + tgt_pos)
+
+        output = tgt_embed
+
+        for block in self.decoder:
+            output = block(output, memory, tgt_mask, memory_mask)
+
+        output = self.generator(self.decoder_norm(output))
+        prob = output[0, len(tgt), :] / T
+        prob = torch.exp(prob) / torch.sum(torch.exp(prob))
+        return prob
 
 
 def weights_init(m):
