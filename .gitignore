@@ -2,8 +2,6 @@
 *.sh
 pretrained/
 temp/
-uspto-full/*
-uspto-mit/**/*
+uspto-*
 **/__pycache__/
-uspto-50k/*
 **/test/
