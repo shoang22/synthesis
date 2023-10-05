@@ -36,6 +36,7 @@ from layers import PositionLayer, MaskLayerLeft, \
 # config = tf.ConfigProto()
 # config.gpu_options.allow_growth = True;
 # K.set_session(tf.Session(config=config))
+tf.compat.v1.disable_v2_behavior()
 sess = tf.compat.v1.Session()
 K.set_session(sess)
 
@@ -385,7 +386,8 @@ def validate(ftest, mdl_encoder, mdl_decoder, T, beam_size):
 
       reaction = line.split(",");
       product = reaction[0].strip();
-      reagents = reaction[2].strip();
+      # reagents = reaction[2].strip();
+      reagents = reaction[1].strip();
 
       answer = [];
 
@@ -496,7 +498,6 @@ def buildNetwork(n_block, n_self):
     # decoder mask and source mask
     # zero out contribution of padded positions from source
     l_emask = MaskLayerRight()([l_dmask, l_mask]);
-
     l_dpos = PositionLayer(EMBEDDING_SIZE)(l_dmask);
     # for masking + covering triangle
     l_right_mask = MaskLayerTriangular()(l_dmask);
@@ -560,7 +561,7 @@ def buildNetwork(n_block, n_self):
        eq = K.mean(eq);
        return eq;
 
-    mdl.compile(optimizer = 'adam', loss = masked_loss, metrics=['accuracy', masked_acc], run_eagerly=True);
+    mdl.compile(optimizer = 'adam', loss = masked_loss, metrics=['accuracy', masked_acc]);
     #mdl.summary();
 
     #Divide the graph for faster execution. First, we calculate encoder's values.
