@@ -89,6 +89,7 @@ GEO = GetPosEncodingMatrix();
 
 def gen_right(data):
     batch_size = len(data);
+    # +1 for start token
     nr = len(data[0]) + 1;
 
     y = np.zeros((batch_size, nr), np.int8);
@@ -96,11 +97,13 @@ def gen_right(data):
     py = np.zeros((batch_size, nr, EMBEDDING_SIZE), np.float32);
 
     for cnt in range(batch_size):
+        # we should take care of this in validation dataloader
         reactants = "^" + data[cnt];
         for i, p in enumerate(reactants):
            try: 
               y[cnt, i] = tgt_char_to_ix[p];
            except:
+              # for oov tokens
               y[cnt, i] = 1;
 
            py[cnt, i] = GEO[i, :EMBEDDING_SIZE ];
@@ -306,12 +309,14 @@ def gen_beam(mdl_encoder, mdl_decoder, T, product, beam_size = 1):
 
    for step in range(MAX_PREDICT):
       if step == 0:
+         # during first step, top num_beam preds are used as first beam tokens
          p = mdl_decoder("", product_encoded, product_mask, T);
-         nr = np.zeros((tgt_vocab_size, 2));
+         nr = np.zeros((tgt_vocab_size, 2)); # [prob(word_i), i]
          for i in range(tgt_vocab_size):
             nr [i ,0 ] = -math.log(p[i]);
             nr [i ,1 ] = i;
       else:
+         # cb = beam_size
          cb = len(lines);
          nr = np.zeros(( cb * tgt_vocab_size, 2));
          for i in range(cb):
@@ -321,7 +326,7 @@ def gen_beam(mdl_encoder, mdl_decoder, T, product, beam_size = 1):
                nr[ i* tgt_vocab_size + j, 0] = -math.log10(p[j]) + scores[i];
                nr[ i* tgt_vocab_size + j, 1] = i * 100 + j;
 
-      y = nr [ nr[:, 0].argsort() ] ;
+      y = nr [ nr[:, 0].argsort() ] ; # sorted negative log_probs
 
       new_beams = [];
       new_scores = [];
@@ -333,7 +338,7 @@ def gen_beam(mdl_encoder, mdl_decoder, T, product, beam_size = 1):
 
          if c == '$':
              added = lines[beamno] + c;
-             if added != "$":
+             if added != "$": # if not empty string pred, add
                 final_beams.append( [ lines[beamno] + c, y[i,0]]);
              beam_size -= 1;
          else:
@@ -348,6 +353,7 @@ def gen_beam(mdl_encoder, mdl_decoder, T, product, beam_size = 1):
    print("Final beams:", len(final_beams));
 
    for i in range(len(final_beams)):
+      # score divided by length (longer = better)
       final_beams[i][1] = final_beams[i][1] / len(final_beams[i][0]);
 
    final_beams = list(sorted(final_beams, key=lambda x:x[1]))[:5];
@@ -700,6 +706,7 @@ def main():
           #if epoch in epochs_to_save:
 
           mdl.save_weights("tr-" + str(epoch) + ".h5", save_format="h5");
+          # reset
           if epoch % 100 == 0 and epoch > 0:
              self.steps = self.warm - 1;
 

@@ -192,7 +192,7 @@ class Trainer:
                 raise ValueError(f"Training state for iter {self.load_epoch} not found")
             
             state = torch.load(state_path, map_location="cpu")
-            self.cyclic_steps = state["cyclic_steps"]
+            self.cyclic_steps = state["cyclic_steps"] # we increment cyclic_step by 1 when batch begins
             self.current_iter = state["current_iter"] + 1
 
             pretrained_paths = state["pretrained_paths"]

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
-
+from generation.utils import decode_to_string
 
 class EmbeddingLayer(nn.Module):
     def __init__(self, embed_dim, vocab_size):
@@ -264,6 +264,7 @@ class AugmentedTransformer(nn.Module):
         self.positional_encoding = PositionLayer(embed_dim, maxlen)
         self.src_mask = MaskLayerLeft(maxlen)
         self.src_vocab_embed = EmbeddingLayer(embed_dim, src_vocab_size)
+        self.maxlen = maxlen
 
         self.encoder = nn.ModuleList([
             EncoderLayer(embed_dim, key_dim, n_head, hidden_dim) for _ in range(n_block)
@@ -310,8 +311,21 @@ class AugmentedTransformer(nn.Module):
 
         return self.generator(output)
     
-    def encode(self, src, src_padding_mask):
-        src_pos = self.positional_encoding(src_padding_mask)
+    def encode(self, x, src_char_to_ix, src_idx_to_char):
+        
+        # src input will be a tensor
+        src, src_padding_mask, src_pos = gen_left(
+            [decode_to_string(x, src_idx_to_char)],
+            embed_dim=self.embed_dim,
+            src_char_to_ix=src_char_to_ix,
+            max_len=self.maxlen
+        )
+
+        src = src.to(x.device)
+        src_padding_mask = src_padding_mask.to(x.device)
+        src_pos = src_pos.to(x.device)
+
+        # positional encoding needs to be pre-computed
         src_mask = self.src_mask(src_padding_mask)
         src_embed = self.src_vocab_embed(src)
         src_embed += src_pos
@@ -321,12 +335,24 @@ class AugmentedTransformer(nn.Module):
         for block in self.encoder:
             memory = block(memory, src_mask)
         
-        return self.encoder_norm(memory)
+        return self.encoder_norm(memory), src_padding_mask
     
-    def decode(self, tgt, memory, src_padding_mask, tgt_padding_mask, T=1.0):
+    def decode(self, y, memory, src_padding_mask, 
+               tgt_char_to_idx, tgt_idx_to_char, T=1.0):
+
+        tgt, tgt_padding_mask, tgt_pos = gen_right(
+            [y],
+            embed_dim=self.embed_dim,
+            tgt_char_to_ix=tgt_char_to_idx,
+            max_len=self.maxlen
+        )
+        
+        tgt = tgt.to(memory.device)
+        tgt_padding_mask = tgt_padding_mask.to(memory.device)
+        tgt_pos = tgt_pos.to(memory.device)
+
         memory_mask = self.memory_mask([tgt_padding_mask, src_padding_mask])
 
-        tgt_pos = self.positional_encoding(tgt_padding_mask)
         tgt_mask = self.tgt_mask(tgt_padding_mask)
         tgt_embed = self.tgt_vocab_embed(tgt)
         tgt_embed = self.dropout(tgt_embed + tgt_pos)
@@ -337,9 +363,70 @@ class AugmentedTransformer(nn.Module):
             output = block(output, memory, tgt_mask, memory_mask)
 
         output = self.generator(self.decoder_norm(output))
-        prob = output[0, len(tgt), :] / T
+        # taking the final token
+        prob = output[0, len(y), :] / T
+        # softmax
         prob = torch.exp(prob) / torch.sum(torch.exp(prob))
         return prob
+
+
+def GetPosEncodingMatrix(max_len, embed_dim):
+    pos_enc = torch.Tensor([
+        [pos / math.pow(10000, 2 * (j // 2) / embed_dim) for j in range(embed_dim)]
+        for pos in range(max_len)
+	])
+    pos_enc[1:, 0::2] = torch.sin(pos_enc[1:, 0::2])
+    pos_enc[1:, 1::2] = torch.cos(pos_enc[1:, 1::2])
+        
+    return pos_enc
+
+
+def gen_left(data, embed_dim, src_char_to_ix, max_len):
+    geo = GetPosEncodingMatrix(max_len, embed_dim)
+    batch_size = len(data)
+    nl = len(data[0]) + 1
+
+    x = torch.zeros((batch_size, nl), dtype=torch.int)
+    mx = torch.zeros((batch_size, nl), dtype=torch.float)
+    px = torch.zeros((batch_size, nl, embed_dim), dtype=torch.float32)
+
+    for cnt in range(batch_size):
+        product = data[cnt] + "$"
+        for i, p in enumerate(product):
+
+           try: 
+              x[cnt, i] = src_char_to_ix[ p] 
+           except:
+              x[cnt, i] = 1
+
+           px[cnt, i] = geo[i, :embed_dim]
+        mx[cnt, :i+1] = 1        
+    return x, mx, px
+
+
+def gen_right(data, embed_dim, tgt_char_to_ix, max_len):
+    geo = GetPosEncodingMatrix(max_len, embed_dim)
+    batch_size = len(data)
+    # +1 for start token
+    nr = len(data[0]) + 1
+
+    y = torch.zeros((batch_size, nr), dtype=torch.int)
+    my = torch.zeros((batch_size, nr), dtype=torch.float)
+    py = torch.zeros((batch_size, nr, embed_dim), dtype=torch.float32)
+
+    for cnt in range(batch_size):
+        # we should take care of this in validation dataloader
+        reactants = "^" + data[cnt]
+        for i, p in enumerate(reactants):
+           try: 
+              y[cnt, i] = tgt_char_to_ix[p]
+           except:
+              # for oov tokens
+              y[cnt, i] = 1
+
+           py[cnt, i] = geo[i, :embed_dim ]
+        my[cnt, :i+1] =1
+    return y, my, py
 
 
 def weights_init(m):
@@ -347,6 +434,8 @@ def weights_init(m):
         torch.nn.init.xavier_normal_(m.weight)
     # else:
         # print(f"weights_init is not supported for {type(m)}. Skipping...")
+
+
 
 
 if __name__ == "__main__":
