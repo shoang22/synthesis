@@ -7,10 +7,10 @@ datasets:
     overfit: False
     subset: ~
   train:
-    batch_size: 128
+    batch_size: 4
     num_workers: 4
   val:
-    batch_size: 128
+    batch_size: 4
     num_workers: 1
 
 train:

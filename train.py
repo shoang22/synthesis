@@ -100,12 +100,13 @@ class Trainer:
         if self.rank == 0:
             self.logger.info(f"Number of params: {self.bare_model.count_parameters()}")
 
-        total_loss = defaultdict(float)
         batches_per_iter = len(self.train_dataloader) / self.train_batch_size
 
         # self.validation()
         self.bare_model.train()
         for epoch in range(self.current_iter, self.total_iters):
+            epoch_logs = defaultdict(float)
+
             for batch_idx, datapoint in enumerate(self.train_dataloader):
                 self.cyclic_steps += 1
 
@@ -125,7 +126,8 @@ class Trainer:
                 
                 if self.rank == 0:
                     for k, v in tb_logs.items():
-                        total_loss[k] += v
+                        self.writer.add_scalar(k, v, self.global_step)
+                        epoch_logs[f"{k}_epoch"] += v
 
                 if self.rank == 0 and self.global_step % self.print_interval == 0:
                     avg_time = timer.get_avg_time()
@@ -135,8 +137,8 @@ class Trainer:
                     curr_lr = self.optimizer.param_groups[0]["lr"]
 
                     self.logger.info(
-                        f"Epoch {epoch}; Step {self.global_step}; Average training time (Net - Data - LR):"
-                        f"{avg_time:.2f} - {data_avg_time:.4f} - {curr_lr}",
+                        f"Epoch {epoch}; Step {self.global_step}; Average training time (Net - Data):"
+                        f"{avg_time:.2f} - {data_avg_time:.4f} | LR: {curr_lr:.8f}",
                     )
 
                 self.global_step += 1
@@ -144,9 +146,9 @@ class Trainer:
                 data_timer.start()
             
             if self.rank == 0:
-                for k, v in tb_logs.items():
-                    total_loss[k] /= batches_per_iter
-                    self.writer.add_scalar(k, v, epoch)
+                for k, _ in epoch_logs.items():
+                    epoch_logs[f"{k}_epoch"] /= batches_per_iter
+                    self.writer.add_scalar(k, epoch_logs[k], epoch)
             
             if self.rank == 0 and epoch > 0 and epoch % self.val_interval == 0:
                 self.validation()
