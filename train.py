@@ -13,6 +13,7 @@ import utils.training_utils as training_utils
 from datasets import get_dataset_distributed
 from models import define_model
 
+from collections import defaultdict, OrderedDict
 import shutil
 import click
 import glob
@@ -32,7 +33,7 @@ class Trainer:
         else:
             self.exp_name = opt["exp_name"]
 
-        if self.opt["train"]["load_epoch"] == "auto":
+        if self.opt["train"]["load_iter"] == "auto":
             exp_path = osp.join(CHECKPOINT_PATH, self.exp_name)
             training_state_paths = sorted(glob.glob(osp.join(exp_path, "training_states/*.state")))
             if len(training_state_paths) == 0:
@@ -43,7 +44,7 @@ class Trainer:
         else:
             self.load_iter = self.opt["train"]["load_iter"]
 
-        self.n_iters = opt["train"]["n_iters"]
+        self.total_iters = opt["train"]["total_iters"]
         self.checkpoint_interval = opt["train"]["checkpoint_interval"]
         self.print_interval = opt["train"]["print_interval"]
         self.val_interval = opt["train"]["val_interval"]
@@ -52,6 +53,8 @@ class Trainer:
         if rank == 0:
             self.initialize_training_folders(self.load_iter == -1)
         
+        self.train_batch_size = opt["datasets"]["train"]["batch_size"]
+        self.val_batch_size = opt["datasets"]["val"]["batch_size"]
         self.train_dataloader, self.val_dataloader = get_dataset_distributed(
             world_size, rank, opt
         )
@@ -90,15 +93,19 @@ class Trainer:
         self.logger = logging.getLogger("base")
 
     def training_loop(self):
+
         timer = training_utils.AvgTimer()
         data_timer = training_utils.AvgTimer()
         
         if self.rank == 0:
             self.logger.info(f"Number of params: {self.bare_model.count_parameters()}")
 
-        self.validation()
+        total_loss = defaultdict(float)
+        batches_per_iter = len(self.train_dataloader) / self.train_batch_size
+
+        # self.validation()
         self.bare_model.train()
-        for epoch in range(self.current_iter, self.n_iters):
+        for epoch in range(self.current_iter, self.total_iters):
             for batch_idx, datapoint in enumerate(self.train_dataloader):
                 self.cyclic_steps += 1
 
@@ -118,9 +125,9 @@ class Trainer:
                 
                 if self.rank == 0:
                     for k, v in tb_logs.items():
-                        self.writer.add_scalar(k, v, self.current_iter)
+                        total_loss[k] += v
 
-                if self.rank == 0 and self.current_iter % self.print_interval == 0:
+                if self.rank == 0 and self.global_step % self.print_interval == 0:
                     avg_time = timer.get_avg_time()
                     data_avg_time = data_timer.get_avg_time()
 
@@ -128,15 +135,20 @@ class Trainer:
                     curr_lr = self.optimizer.param_groups[0]["lr"]
 
                     self.logger.info(
-                        f"Epoch {epoch}; Step {self.current_iter}; Average training time (Net - Data - LR):"
+                        f"Epoch {epoch}; Step {self.global_step}; Average training time (Net - Data - LR):"
                         f"{avg_time:.2f} - {data_avg_time:.4f} - {curr_lr}",
                     )
 
-                self.current_iter += 1
+                self.global_step += 1
 
                 data_timer.start()
             
-            if self.rank == 0 and self.current_iter > 0 and self.current_iter % self.val_interval == 0:
+            if self.rank == 0:
+                for k, v in tb_logs.items():
+                    total_loss[k] /= batches_per_iter
+                    self.writer.add_scalar(k, v, epoch)
+            
+            if self.rank == 0 and epoch > 0 and epoch % self.val_interval == 0:
                 self.validation()
                 self.bare_model.train()
 
@@ -147,12 +159,11 @@ class Trainer:
             if epoch % self.cycle_every_n_epoch == 0 and epoch > 0:
                 self.cyclic_steps = self.warmup - 1
 
-            if self.rank == 0 and self.current_iter > 0 and self.current_iter % self.checkpoint_interval == 0:
+            if self.rank == 0 and epoch > 0 and epoch % self.checkpoint_interval == 0:
                 self.logger.info(f"Saving checkpoints {self.current_iter}")
                 self.save_training()
 
             self.current_iter += 1
-
 
     def save_training(self):
         self.logger.info(f"Saving iter {self.current_iter}...")
@@ -167,6 +178,7 @@ class Trainer:
             "optimizer": self.optimizer.state_dict(),
             "current_iter": self.current_iter,
             "cyclic_steps": self.cyclic_steps,
+            "global_step": self.global_step,
         }
 
         training_state_save_path = TRAINING_STATE_SAVE_PATH_FORMAT.format(self.exp_name, self.current_iter)
@@ -175,7 +187,7 @@ class Trainer:
             torch.save(ckpt_state_dict, MODEL_SAVE_PATH_FORMAT.format(self.exp_name, self.current_iter, ckpt_name))
 
     def resume_training(self):
-        if self.load_epoch == -1:
+        if self.load_iter == -1:
             pretrained_paths = self.opt["train"]["pretrained_paths"]
             if self.rank == 0:
                 self.logger.info("Training model from scratch...")
@@ -183,17 +195,19 @@ class Trainer:
             self.bare_model.load_network(pretrained_paths)
             self.current_iter = 0
             self.cyclic_steps = 0
+            self.global_step = 0
         else:
             if self.rank == 0:
                 self.logger.info(f"Resuming training from iter {self.load_iter + 1}")
             
-            state_path = TRAINING_STATE_SAVE_PATH_FORMAT.format(self.exp_name, self.load_epoch)
+            state_path = TRAINING_STATE_SAVE_PATH_FORMAT.format(self.exp_name, self.load_iter)
             if not osp.isfile(state_path):
-                raise ValueError(f"Training state for iter {self.load_epoch} not found")
+                raise ValueError(f"Training state for iter {self.load_iter} not found")
             
             state = torch.load(state_path, map_location="cpu")
             self.cyclic_steps = state["cyclic_steps"] # we increment cyclic_step by 1 when batch begins
             self.current_iter = state["current_iter"] + 1
+            self.global_step = state["global_step"] + 1
 
             pretrained_paths = state["pretrained_paths"]
             for path in pretrained_paths.values():
@@ -204,6 +218,28 @@ class Trainer:
             self.optimizer.load_state_dict(resume_optimizer)
             
             self.bare_model.load_network(pretrained_paths)
+
+    def average_weights(self):
+        
+        checkpoint = self.bare_model.get_checkpoint()
+        weights_to_average = self.opt["weights_to_average"]
+        
+        if len(weights_to_average) == 0:
+            return
+
+        avg_state_dict = OrderedDict(list)
+
+        for i in weights_to_average:
+            model_path = MODEL_SAVE_PATH_FORMAT.format(self.exp_name, i)
+            curr_weights = torch.load(model_path, map_location="cpu")
+            for k, v in curr_weights.items():
+                avg_state_dict.get(k, []).append(curr_weights)
+
+        for k, v in avg_state_dict.items():
+            avg_state_dict[k] = torch.mean(torch.stack(v))
+
+        for ckpt_name, ckpt_state_dict in checkpoint.items():
+            torch.save(ckpt_state_dict, MODEL_SAVE_PATH_FORMAT.format(self.exp_name, "avg", ckpt_name))
 
     def validation(self):
         if self.rank != 0:

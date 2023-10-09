@@ -1,7 +1,7 @@
 import torch
 import torch.optim as optim
 import torch.optim.lr_scheduler as lrs
-from torch_optimizer import Adafactor
+# from torch_optimizer import Adafactor
 import glob
 import os 
 import time
@@ -46,8 +46,8 @@ def get_optimizer(named_params, opt):
         optimizer_function = optim.AdamW
     if opt_name == 'adam':
         optimizer_function = optim.Adam
-    elif opt_name == 'adafactor':
-        optimizer_function = Adafactor
+    # elif opt_name == 'adafactor':
+    #     optimizer_function = Adafactor
     else:
         raise ValueError(f'{opt_name} optimizer not supported')
     

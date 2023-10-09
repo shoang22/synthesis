@@ -732,7 +732,8 @@ def main():
 
            for i in epochs_to_save:
               f.append(h5py.File("tr-" + str(i) + ".h5", "r+"));
-
+           
+           # using first weights
            keys = list(f[0].keys());
            for key in keys:
               groups = list(f[0][key]);

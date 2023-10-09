@@ -5,3 +5,4 @@ temp/
 uspto-*
 **/__pycache__/
 **/test/
+experiments/

@@ -92,13 +92,13 @@ class RetroCollator:
         # add start symbol
         nr += 1
 
-        x = torch.zeros((batch_size, nl), dtype=torch.int)
-        mx = torch.zeros((batch_size, nl), dtype=torch.int)
+        x = torch.zeros((batch_size, nl)).type(torch.LongTensor)
+        mx = torch.zeros((batch_size, nl)).type(torch.LongTensor)
         
-        y = torch.zeros((batch_size, nr), dtype=torch.int)
-        my = torch.zeros((batch_size, nr), dtype=torch.int)
+        y = torch.zeros((batch_size, nr)).type(torch.LongTensor)
+        my = torch.zeros((batch_size, nr)).type(torch.LongTensor)
 
-        z = torch.zeros((batch_size, nr, tgt_vocab_size), dtype=torch.int)
+        z = torch.zeros((batch_size, nr, tgt_vocab_size)).type(torch.LongTensor)
 
         for cnt in range(batch_size):
             product = left[cnt]

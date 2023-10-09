@@ -3,8 +3,8 @@ import torch.nn as nn
 import os
 from collections import OrderedDict
 
-import sys
-sys.path.append("./")
+# import sys
+# sys.path.append("./")
 from models.losses import masked_loss
 from metrics import masked_acc
 from archs import define_arch
@@ -19,7 +19,7 @@ class RetroSeq2SeqModel(nn.Module):
         self.src_idx_to_char = {idx: char for char, idx in self.src_char_to_idx.items()}
         self.tgt_char_to_idx = tokenizer_from_vocab(opt["tokenizer"]["src_vocab"])
         self.tgt_idx_to_char = {idx: char for char, idx in self.tgt_char_to_idx.items()}
-        self.maxlen = opt["net"]["opt"]["maxlen"]
+        self.maxlen = opt["max_decoding_len"]
 
         opt["net"]["opt"]["src_vocab_size"] = len(self.src_char_to_idx)
         opt["net"]["opt"]["tgt_vocab_size"] = len(self.tgt_char_to_idx)
@@ -56,7 +56,6 @@ class RetroSeq2SeqModel(nn.Module):
 
             self.net.load_state_dict(state_dict, strict=True)
 
-
     def forward(self, data: dict):
         data = {k: v.to(self.device) for k, v in data.items()}
 
@@ -65,13 +64,13 @@ class RetroSeq2SeqModel(nn.Module):
 
         tb_logs = {}
 
-        masked_loss = masked_loss(data["tgt"], logits)
-        masked_acc = masked_acc(data["tgt"], logits)
+        m_loss = masked_loss(data["gt"], logits)
+        m_acc = masked_acc(data["gt"], logits)
 
-        total_loss += masked_loss
+        total_loss += m_loss
         tb_logs.update({
-            "losses/masked_loss": masked_loss.item(),
-            "metrics/masked_acc": masked_acc.item()
+            "losses/masked_loss": m_loss.item(),
+            "metrics/masked_acc": m_acc.item()
         })
 
         return total_loss, tb_logs

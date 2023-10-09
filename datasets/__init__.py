@@ -11,7 +11,7 @@ def get_dataset_distributed(world_size, rank, opt):
         raise NotImplementedError(f"{dataset_name} is not implemented")
 
     train_dataset = TD(opt["datasets"])
-    collate_fn = Collator(opt["tokenizer"])
+    collate_fn = Collator(opt["model"]["tokenizer"])
 
     if rank == 0:
         val_dataset = VD(opt["datasets"])

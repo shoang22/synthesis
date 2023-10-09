@@ -41,7 +41,7 @@ class MaskLayerLeft(nn.Module):
         self.register_buffer("r_left", rank)
 
     def forward(self, x):
-        x = x.unsqueeze(-1)
+        x = x.float().unsqueeze(-1)
         mask = torch.matmul(x, self.r_left[:, :x.shape[1]])
         return mask.transpose(1, 2)
 
@@ -52,9 +52,9 @@ class MaskLayerRight(nn.Module):
         rank = torch.ones((1, maxlen), dtype=torch.float)
         self.register_buffer("r_right", rank)
 
-    def forward(self, x):
-        right = x[0]
-        left = x[1]
+    def forward(self, x: torch.Tensor):
+        right = x[0].float()
+        left = x[1].float()
 
         left = left.unsqueeze(-1)
         mask = torch.matmul(left, self.r_right[:, :right.shape[1]])
@@ -72,7 +72,7 @@ class MaskLayerTriangular(nn.Module):
         self.register_buffer("r_tril", rank)
 
     def forward(self, x):
-        x = x.unsqueeze(-1)
+        x = x.unsqueeze(-1).float()
         mask = torch.matmul(x, self.r_tril[:, :x.shape[1]])
         return self.tril[:x.shape[1], :x.shape[1]] * mask.transpose(1, 2)
 
@@ -100,13 +100,6 @@ class SelfLayer(nn.Module):
         self.n_head = n_head
 
         self.denom = math.sqrt(key_dim)
-
-        # self.linear_Q = nn.Linear(embed_dim, key_dim, bias=False), 
-        # torch.nn.init.xavier_normal_(self.linear_Q.weight)
-        # self.linear_K = nn.Linear(embed_dim, key_dim, bias=False), 
-        # torch.nn.init.xavier_normal_(self.linear_K.weight)
-        # self.linear_V = nn.Linear(embed_dim, key_dim, bias=False), 
-        # torch.nn.init.xavier_normal_(self.linear_V.weight)
 
         self.linear_qkvs = nn.ModuleList([])
 
@@ -386,8 +379,8 @@ def gen_left(data, embed_dim, src_char_to_ix, max_len):
     batch_size = len(data)
     nl = len(data[0]) + 1
 
-    x = torch.zeros((batch_size, nl), dtype=torch.int)
-    mx = torch.zeros((batch_size, nl), dtype=torch.float)
+    x = torch.zeros((batch_size, nl)).type(torch.LongTensor)
+    mx = torch.zeros((batch_size, nl)).type(torch.LongTensor)
     px = torch.zeros((batch_size, nl, embed_dim), dtype=torch.float32)
 
     for cnt in range(batch_size):
@@ -410,8 +403,8 @@ def gen_right(data, embed_dim, tgt_char_to_ix, max_len):
     # +1 for start token
     nr = len(data[0]) + 1
 
-    y = torch.zeros((batch_size, nr), dtype=torch.int)
-    my = torch.zeros((batch_size, nr), dtype=torch.float)
+    y = torch.zeros((batch_size, nr)).type(torch.LongTensor)
+    my = torch.zeros((batch_size, nr)).type(torch.LongTensor)
     py = torch.zeros((batch_size, nr, embed_dim), dtype=torch.float32)
 
     for cnt in range(batch_size):
@@ -434,8 +427,6 @@ def weights_init(m):
         torch.nn.init.xavier_normal_(m.weight)
     # else:
         # print(f"weights_init is not supported for {type(m)}. Skipping...")
-
-
 
 
 if __name__ == "__main__":
