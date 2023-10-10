@@ -46,8 +46,7 @@ class RetroDataset(Dataset):
 
 class RetroTrainDataset(RetroDataset):
     def __init__(self, opt):
-        transforms = [canonize]
-        super().__init__(opt, transforms)
+        super().__init__(opt, None)
 
 class RetroValDataset(RetroDataset):
     def __init__(self, opt):
