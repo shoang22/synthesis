@@ -243,9 +243,11 @@ class Trainer:
 
         for k, v in avg_state_dict.items():
             avg_state_dict[k] = torch.mean(v, dim=0, keepdim=True)
+        
+        out_path = MODEL_SAVE_PATH_FORMAT.format(self.exp_name, weights_to_average[-1], "net")
+        out_path = os.path.join(*out_path.split(os.path.sep)[:-2], "avg_net")
 
-        for ckpt_name, ckpt_state_dict in checkpoint.items():
-            torch.save(ckpt_state_dict, MODEL_SAVE_PATH_FORMAT.format(self.exp_name, "avg", ckpt_name))
+        torch.save(avg_state_dict, out_path)
 
     def validation(self):
         if self.rank != 0:
