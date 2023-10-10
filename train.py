@@ -147,6 +147,7 @@ class Trainer:
             
             if self.rank == 0:
                 for k, _ in epoch_logs.items():
+                    assert f"{k}_epoch" in epoch_logs.keys()
                     epoch_logs[f"{k}_epoch"] /= batches_per_iter
                     self.writer.add_scalar(k, epoch_logs[k], epoch)
             

@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import math
 from generation.utils import decode_to_string
 
+
 class EmbeddingLayer(nn.Module):
     def __init__(self, embed_dim, vocab_size):
         super(EmbeddingLayer, self).__init__()
@@ -113,6 +114,7 @@ class SelfLayer(nn.Module):
             self.linear_qkvs.append(qkv_head) 
 
     def forward(self, inputs):
+        # inputs: [x_i, x_t, x_t, x_t]
         out = []
 
         for linear_Q, linear_K, linear_V in self.linear_qkvs:
@@ -251,12 +253,15 @@ class AugmentedTransformer(nn.Module):
         hidden_dim,
         src_vocab_size, 
         tgt_vocab_size, 
+        fingerprint_size,
         n_block,
         n_head
     ):
         super(AugmentedTransformer, self).__init__()
         self.embed_dim = embed_dim
-        self.positional_encoding = PositionLayer(embed_dim, maxlen)
+
+        self.fingerprint_embed = EmbeddingLayer(embed_dim, fingerprint_size)
+        self.positional_encoding = PositionLayer(embed_dim, max(maxlen, fingerprint_size))
         self.src_mask = MaskLayerLeft(maxlen)
         self.src_vocab_embed = EmbeddingLayer(embed_dim, src_vocab_size)
         self.maxlen = maxlen
@@ -278,10 +283,24 @@ class AugmentedTransformer(nn.Module):
 
         self.generator = TimeDistributed(nn.Linear(embed_dim, tgt_vocab_size))
 
-    def forward(self, src, tgt, src_padding_mask, tgt_padding_mask, **kwargs):
+    def forward(
+        self, 
+        fp, 
+        src, 
+        tgt, 
+        src_padding_mask, 
+        fp_padding_mask,
+        tgt_padding_mask, 
+        **kwargs
+    ):
+        fp_embed = self.fingerprint_embed(fp)
+        fp_pos = self.positional_encoding(fp_padding_mask)
+        
         src_pos = self.positional_encoding(src_padding_mask)
         src_mask = self.src_mask(src_padding_mask)
         src_embed = self.src_vocab_embed(src)
+
+        fp_embed += fp_pos
         src_embed += src_pos
 
         memory = src_embed
