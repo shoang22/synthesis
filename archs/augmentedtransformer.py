@@ -134,6 +134,8 @@ class SelfLayer(nn.Module):
         return torch.cat(out, dim=-1)
 
 
+# TODO: add multimodal attention
+
 class EncoderLayer(nn.Module):
     def __init__(
         self,
