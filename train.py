@@ -243,9 +243,10 @@ class Trainer:
 
         for k, v in avg_state_dict.items():
             avg_state_dict[k] = torch.mean(v, dim=0, keepdim=True)
-        
+
+        avg_s = "".join([str(i) for i in weights_to_average])
         out_path = MODEL_SAVE_PATH_FORMAT.format(self.exp_name, weights_to_average[-1], "net")
-        out_path = os.path.join(*out_path.split(os.path.sep)[:-2], "avg_net")
+        out_path = os.path.join(*out_path.split(os.path.sep)[:-1], f"avg_{avg_s}_net.pth")
 
         torch.save(avg_state_dict, out_path)
 

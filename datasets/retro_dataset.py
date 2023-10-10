@@ -10,7 +10,7 @@ class RetroDataset(Dataset):
     def __init__(self, opt, transforms):
         super().__init__()
         self.logger = logging.getLogger("base")
-        with open(opt["data_path"], "r") as f:
+        with open(opt["data_root"], "r") as f:
             self.data = f.readlines()[1:] # skip header
 
         self.transforms = transforms
