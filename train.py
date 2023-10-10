@@ -143,8 +143,6 @@ class Trainer:
 
                 self.global_step += 1
 
-                if self.global_step % 10 == 0: break
-
                 data_timer.start()
             
             if self.rank == 0:
