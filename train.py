@@ -142,6 +142,7 @@ class Trainer:
                     )
 
                 self.global_step += 1
+                if self.global_step % 10 == 0: break
 
                 data_timer.start()
             
@@ -167,6 +168,7 @@ class Trainer:
                 self.save_training()
 
             self.current_iter += 1
+        self.average_weights()
 
     def save_training(self):
         self.logger.info(f"Saving iter {self.current_iter}...")
@@ -225,21 +227,22 @@ class Trainer:
     def average_weights(self):
         
         checkpoint = self.bare_model.get_checkpoint()
-        weights_to_average = self.opt["weights_to_average"]
+        weights_to_average = self.opt["model"]["weights_to_average"]
         
         if len(weights_to_average) == 0:
             return
 
-        avg_state_dict = OrderedDict(list)
+        first_model_path = MODEL_SAVE_PATH_FORMAT.format(self.exp_name, weights_to_average[0], "net")
+        avg_state_dict = torch.load(first_model_path, map_location="cpu") 
 
-        for i in weights_to_average:
-            model_path = MODEL_SAVE_PATH_FORMAT.format(self.exp_name, i)
+        for i in weights_to_average[1:]:
+            model_path = MODEL_SAVE_PATH_FORMAT.format(self.exp_name, i, "net")
             curr_weights = torch.load(model_path, map_location="cpu")
             for k, v in curr_weights.items():
-                avg_state_dict.get(k, []).append(curr_weights)
+                avg_state_dict[k] = torch.cat((avg_state_dict[k], curr_weights[k]), dim=0)
 
         for k, v in avg_state_dict.items():
-            avg_state_dict[k] = torch.mean(torch.stack(v))
+            avg_state_dict[k] = torch.mean(v, dim=0, keepdim=True)
 
         for ckpt_name, ckpt_state_dict in checkpoint.items():
             torch.save(ckpt_state_dict, MODEL_SAVE_PATH_FORMAT.format(self.exp_name, "avg", ckpt_name))

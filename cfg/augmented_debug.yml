@@ -7,18 +7,18 @@ datasets:
     overfit: False
     subset: ~
   train:
-    batch_size: 4
-    num_workers: 4
+    batch_size: 8
+    num_workers: 8
   val:
     batch_size: 4
     num_workers: 1
 
 train:
-  total_iters: 600
+  total_iters: 6
   load_iter: auto
   checkpoint_interval: 1
   print_interval: 100  # by steps
-  val_interval: 1
+  val_interval: 100
 
   pretrained_paths:
     net: ~
@@ -48,7 +48,7 @@ model:
       key_dim: 64
       maxlen: 1000
 
-  weights_to_average: [600, 700, 800, 900, 999]
+  weights_to_average: [1, 2, 3, 4, 5]
   temperature: 1.2
   beam_size: 5
   max_decoding_len: 160
