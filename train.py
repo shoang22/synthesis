@@ -143,11 +143,14 @@ class Trainer:
 
                 self.global_step += 1
 
+                if self.global_step % 10 == 0: break
+
                 data_timer.start()
             
             if self.rank == 0:
                 for k, _ in epoch_logs.items():
-                    epoch_logs[f"{k}_epoch"] /= batches_per_iter
+                    assert "_epoch" in k
+                    epoch_logs[k] /= batches_per_iter
                     self.writer.add_scalar(k, epoch_logs[k], epoch)
             
             if self.rank == 0 and epoch > 0 and epoch % self.val_interval == 0:
