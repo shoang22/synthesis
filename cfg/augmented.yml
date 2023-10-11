@@ -1,4 +1,5 @@
 exp_name: augmented
+proj_dir: ./
 
 datasets:
   dataset_name: retro
@@ -17,7 +18,7 @@ datasets:
 train:
   total_iters: 600
   load_iter: auto
-  checkpoint_interval: 
+  checkpoint_interval: 100
   print_interval: 100  # by steps
   val_interval: 250
 

@@ -33,6 +33,8 @@ class Trainer:
         else:
             self.exp_name = opt["exp_name"]
 
+        self.proj_dir = opt["proj_dir"]
+
         if self.opt["train"]["load_iter"] == "auto":
             exp_path = osp.join(CHECKPOINT_PATH, self.exp_name)
             training_state_paths = sorted(glob.glob(osp.join(exp_path, "training_states/*.state")))
@@ -71,7 +73,7 @@ class Trainer:
         self.resume_training()
     
     def initialize_training_folders(self, from_scratch):
-        exp_path = osp.join(CHECKPOINT_PATH, self.exp_name)
+        exp_path = osp.join(self.proj_dir, CHECKPOINT_PATH, self.exp_name)
         model_folder = osp.join(exp_path, "models")
         training_state_folder = osp.join(exp_path, "training_states")
 
@@ -223,7 +225,6 @@ class Trainer:
 
     def average_weights(self):
         
-        checkpoint = self.bare_model.get_checkpoint()
         weights_to_average = self.opt["model"]["weights_to_average"]
         
         if len(weights_to_average) == 0:
