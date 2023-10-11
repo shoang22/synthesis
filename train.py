@@ -89,9 +89,6 @@ class Trainer:
             os.makedirs(exp_path)
             os.makedirs(model_folder, exist_ok=True)
             os.makedirs(training_state_folder, exist_ok=True)
-
-            if not os.path.isdir(CHECKPOINT_PATH):
-                os.symlink(osp.join(self.proj_dir, CHECKPOINT_PATH), CHECKPOINT_PATH + "/")
         
         self.writer = SummaryWriter(log_dir=exp_path)
         training_utils.setup_logger("base", exp_path, screen=True, tofile=True)
@@ -177,7 +174,7 @@ class Trainer:
         
         checkpoint = self.bare_model.get_checkpoint()
         pretrained_paths = {
-            x: MODEL_SAVE_PATH_FORMAT.format(self.exp_name, self.current_iter, x) for x in checkpoint.keys()
+            x: MODEL_SAVE_PATH_FORMAT.format(self.proj_dir, self.exp_name, self.current_iter, x) for x in checkpoint.keys()
         }
 
         state = {
@@ -188,10 +185,10 @@ class Trainer:
             "global_step": self.global_step,
         }
 
-        training_state_save_path = TRAINING_STATE_SAVE_PATH_FORMAT.format(self.exp_name, self.current_iter)
+        training_state_save_path = TRAINING_STATE_SAVE_PATH_FORMAT.format(self.proj_dir, self.exp_name, self.current_iter)
         torch.save(state, training_state_save_path)
         for ckpt_name, ckpt_state_dict in checkpoint.items():
-            torch.save(ckpt_state_dict, MODEL_SAVE_PATH_FORMAT.format(self.exp_name, self.current_iter, ckpt_name))
+            torch.save(ckpt_state_dict, MODEL_SAVE_PATH_FORMAT.format(self.proj_dir, self.exp_name, self.current_iter, ckpt_name))
 
     def resume_training(self):
         if self.load_iter == -1:
@@ -207,7 +204,7 @@ class Trainer:
             if self.rank == 0:
                 self.logger.info(f"Resuming training from iter {self.load_iter + 1}")
             
-            state_path = TRAINING_STATE_SAVE_PATH_FORMAT.format(self.exp_name, self.load_iter)
+            state_path = TRAINING_STATE_SAVE_PATH_FORMAT.format(self.proj_dir, self.exp_name, self.load_iter)
             if not osp.isfile(state_path):
                 raise ValueError(f"Training state for iter {self.load_iter} not found")
             
@@ -233,11 +230,11 @@ class Trainer:
         if len(weights_to_average) == 0:
             return
 
-        first_model_path = MODEL_SAVE_PATH_FORMAT.format(self.exp_name, weights_to_average[0], "net")
+        first_model_path = MODEL_SAVE_PATH_FORMAT.format(self.proj_dir, self.exp_name, weights_to_average[0], "net")
         avg_state_dict = torch.load(first_model_path, map_location="cpu") 
 
         for i in weights_to_average[1:]:
-            model_path = MODEL_SAVE_PATH_FORMAT.format(self.exp_name, i, "net")
+            model_path = MODEL_SAVE_PATH_FORMAT.format(self.proj_dir, self.exp_name, i, "net")
             curr_weights = torch.load(model_path, map_location="cpu")
             for k, v in curr_weights.items():
                 avg_state_dict[k] = torch.cat((avg_state_dict[k], curr_weights[k]), dim=0)
@@ -246,7 +243,7 @@ class Trainer:
             avg_state_dict[k] = torch.mean(v, dim=0, keepdim=True)
 
         avg_s = "".join([str(i) for i in weights_to_average])
-        out_path = MODEL_SAVE_PATH_FORMAT.format(self.exp_name, weights_to_average[-1], "net")
+        out_path = MODEL_SAVE_PATH_FORMAT.format(self.proj_dir, self.exp_name, weights_to_average[-1], "net")
         out_path = os.path.join(*out_path.split(os.path.sep)[:-1], f"avg_{avg_s}_net.pth")
 
         torch.save(avg_state_dict, out_path)
@@ -260,7 +257,7 @@ class Trainer:
             return
     
         timer = training_utils.AvgTimer()
-        val_save_root = VAL_SAMPLE_SAVE_PATH.format(self.exp_name, self.current_iter)
+        val_save_root = VAL_SAMPLE_SAVE_PATH.format(self.proj_dir, self.exp_name, self.current_iter)
         os.makedirs(val_save_root, exist_ok=True)
         self.logger.info("Evaluating metrics on validation set")
 

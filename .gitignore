@@ -4,7 +4,7 @@ pretrained/
 temp/
 **/__pycache__/
 **/test/
-experiments/
 slurm_out/*
 data/*
 cfg/*
+experiments
