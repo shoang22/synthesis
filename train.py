@@ -91,7 +91,7 @@ class Trainer:
             os.makedirs(training_state_folder, exist_ok=True)
 
             if not os.path.isdir(CHECKPOINT_PATH):
-                os.symlink(osp.join(self.proj_dir, CHECKPOINT_PATH), CHECKPOINT_PATH)
+                os.symlink(osp.join(self.proj_dir, CHECKPOINT_PATH), CHECKPOINT_PATH + "/")
         
         self.writer = SummaryWriter(log_dir=exp_path)
         training_utils.setup_logger("base", exp_path, screen=True, tofile=True)
