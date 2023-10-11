@@ -2,8 +2,9 @@
 *.sh
 pretrained/
 temp/
-uspto-*
 **/__pycache__/
 **/test/
 experiments/
 slurm_out/*
+data/*
+cfg/*
