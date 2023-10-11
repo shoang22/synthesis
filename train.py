@@ -100,8 +100,6 @@ class Trainer:
         if self.rank == 0:
             self.logger.info(f"Number of params: {self.bare_model.count_parameters()}")
 
-        batches_per_iter = len(self.train_dataloader) / self.train_batch_size
-
         # self.validation()
         self.bare_model.train()
         for epoch in range(self.current_iter, self.total_iters):
@@ -142,14 +140,12 @@ class Trainer:
                     )
 
                 self.global_step += 1
-                if self.global_step % 10 == 0: break
-
                 data_timer.start()
             
             if self.rank == 0:
                 for k, _ in epoch_logs.items():
                     assert "_epoch" in k
-                    epoch_logs[k] /= batches_per_iter
+                    epoch_logs[k] /= len(self.train_dataloader)
                     self.writer.add_scalar(k, epoch_logs[k], epoch)
             
             if self.rank == 0 and epoch > 0 and epoch % self.val_interval == 0:
@@ -168,6 +164,7 @@ class Trainer:
                 self.save_training()
 
             self.current_iter += 1
+        
         self.average_weights()
 
     def save_training(self):
