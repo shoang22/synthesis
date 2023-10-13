@@ -24,12 +24,12 @@ class suppress_stderr(object):
 def gen_greedy(model, T, src, fp, fp_padding_mask, max_len, tgt_char_to_idx, tgt_idx_to_char,
                src_char_to_idx, src_idx_to_char):
 
-    src_encoded, src_mask = model.encode(src, fp, fp_padding_mask, src_char_to_idx, src_idx_to_char)
+    src_encoded, mm_embed = model.encode(src, fp, fp_padding_mask, src_char_to_idx, src_idx_to_char)
 
     res = ""
     score = 0.0
     for i in range(1, max_len):
-        p = model.decode(res, src_encoded, src_mask, 
+        p = model.decode(res, src_encoded, mm_embed, 
                          tgt_char_to_idx, tgt_idx_to_char, T).detach().cpu.numpy()
         w = np.argmax(p)
         score -= math.log10( np.max(p))
@@ -61,7 +61,7 @@ def gen_beam(
 ):
     tgt_vocab_size = len(tgt_char_to_idx)
 
-    src_encoded, src_mask = model.encode(src, fp, fp_padding_mask, src_char_to_idx, src_idx_to_char)
+    src_encoded, mm_embed = model.encode(src, fp, fp_padding_mask, src_char_to_idx, src_idx_to_char)
 
     if beam_size == 1:
         return [gen_greedy(model, T, src, max_len=max_len, fp=fp, fp_padding_mask=fp_padding_mask, 
@@ -79,7 +79,7 @@ def gen_beam(
     for step in range(max_len):
         if step == 0:
             # during first step, top num_beam preds are used as first beam tokens
-            p = model.decode("", src_encoded, src_mask, tgt_char_to_idx, tgt_idx_to_char, T)
+            p = model.decode("", src_encoded, mm_embed, tgt_char_to_idx, tgt_idx_to_char, T)
             p = p.detach().cpu().numpy()
             nr = np.zeros((tgt_vocab_size, 2)) # [prob(word_i), i]
             for i in range(tgt_vocab_size):
@@ -90,7 +90,7 @@ def gen_beam(
             cb = len(lines)
             nr = np.zeros(( cb * tgt_vocab_size, 2))
             for i in range(cb):
-                p = model.decode(lines[i], src_encoded, src_mask, tgt_char_to_idx, tgt_idx_to_char, T)
+                p = model.decode(lines[i], src_encoded, mm_embed, tgt_char_to_idx, tgt_idx_to_char, T)
                 p = p.detach().cpu().numpy()
             for j in range(tgt_vocab_size):
                 nr[ i* tgt_vocab_size + j, 0] = -math.log10(p[j]) + scores[i]

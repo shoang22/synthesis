@@ -47,6 +47,20 @@ class MaskLayerLeft(nn.Module):
         return mask.transpose(1, 2)
 
 
+class MaskLayerLeftMultiModal(nn.Module):
+    def __init__(self, maxlen):
+        super(MaskLayerLeftMultiModal, self).__init__()
+        rank = torch.ones((1, maxlen), dtype=torch.float)
+        self.register_buffer("r_left", rank)
+
+    def forward(self, x, x_mm):
+        n_batch, s_len = x.shape
+        _, mm_len = x_mm.shape
+
+        mask = x.unsqueeze(1).expand(n_batch, mm_len + s_len, s_len)
+        return mask
+
+
 class MaskLayerRight(nn.Module):
     def __init__(self, maxlen):
         super(MaskLayerRight, self).__init__()
@@ -54,12 +68,19 @@ class MaskLayerRight(nn.Module):
         self.register_buffer("r_right", rank)
 
     def forward(self, x: torch.Tensor):
-        right = x[0].float()
-        left = x[1].float()
+        right = x[0]
+        left = x[1]
+        smm = x[2]
 
-        left = left.unsqueeze(-1)
-        mask = torch.matmul(left, self.r_right[:, :right.shape[1]])
-        return mask.transpose(1, 2)
+        n_batch, t_len = right.shape
+        _, s_len, = left.shape
+        _, smm_len, _ = smm.shape
+        # in this case, left has shape [n, l_nn, l_s]
+        # we want the mask of the left to be repeated l_right times
+
+        mask = left.unsqueeze(1).expand(n_batch, t_len, smm_len)
+        # we want resulting matrix to have shape [n, right, left] 
+        return mask
 
 
 class MaskLayerTriangular(nn.Module):
@@ -266,7 +287,7 @@ class AugmentedTransformer(nn.Module):
 
         self.fingerprint_embed = EmbeddingLayer(embed_dim, fingerprint_size)
         self.positional_encoding = PositionLayer(embed_dim, max(maxlen, fingerprint_size))
-        self.src_mask = MaskLayerLeft(maxlen)
+        self.src_mask = MaskLayerLeftMultiModal(max(maxlen, fingerprint_size))
         self.src_vocab_embed = EmbeddingLayer(embed_dim, src_vocab_size)
         self.maxlen = maxlen
 
@@ -276,7 +297,7 @@ class AugmentedTransformer(nn.Module):
         self.encoder_norm = LayerNormalization(embed_dim)
 
         self.tgt_vocab_embed = EmbeddingLayer(embed_dim, tgt_vocab_size)
-        self.memory_mask = MaskLayerRight(maxlen)
+        self.memory_mask = MaskLayerRight(max(maxlen, fingerprint_size))
         self.tgt_mask = MaskLayerTriangular(maxlen)
         self.dropout = nn.Dropout(p=0.1)
 
@@ -297,29 +318,40 @@ class AugmentedTransformer(nn.Module):
         tgt_padding_mask, 
         **kwargs
     ):
+
+        bs, src_len = src.shape        
+        _, tgt_len = tgt.shape        
+
         fp_embed = self.fingerprint_embed(fp)
         fp_pos = self.positional_encoding(fp_padding_mask)
         
         src_pos = self.positional_encoding(src_padding_mask)
-        src_mask = self.src_mask(src_padding_mask)
         src_embed = self.src_vocab_embed(src)
 
         fp_embed += fp_pos
         src_embed += src_pos
 
         mm_embed = torch.cat([src_embed, fp_embed], dim=1)
+        _, mm_len, _ = mm_embed.shape
+        mm_mask = src_padding_mask.unsqueeze(1).expand(bs, mm_len, src_len)
+
         memory = mm_embed
 
         for block in self.encoder:
-            memory = block(src_embed, memory, src_mask)
+            memory = block(src_embed, memory, mm_mask) 
         
         memory = self.encoder_norm(memory)
-        memory_mask = self.memory_mask([tgt_padding_mask, src_padding_mask])
+        _, mem_len, _ = memory.shape
+
+        mm_words = mm_embed[:, :, 0]
+        memory_mask = mm_words.data.eq(0).unsqueeze(1).expand(bs, tgt_len, mem_len).long()
 
         tgt_pos = self.positional_encoding(tgt_padding_mask)
-        tgt_mask = self.tgt_mask(tgt_padding_mask)
         tgt_embed = self.tgt_vocab_embed(tgt)
         tgt_embed = self.dropout(tgt_embed + tgt_pos)
+        
+        tgt_mask = tgt_padding_mask.unsqueeze(1).expand(bs, tgt_len, tgt_len)
+        tgt_mask = tgt_mask * torch.tril(torch.ones(bs, tgt_len, tgt_len)).to(src.device)
 
         output = tgt_embed
 
@@ -339,29 +371,32 @@ class AugmentedTransformer(nn.Module):
             src_char_to_ix=src_char_to_ix,
             max_len=self.maxlen
         )
+        
+        bs, src_len = src.shape        
+
+        fp_embed = self.fingerprint_embed(x_fp)[None, :]
+        fp_pos = self.positional_encoding(fp_padding_mask[None, :])
 
         src = src.to(x.device)
         src_padding_mask = src_padding_mask.to(x.device)
         src_pos = src_pos.to(x.device)
-
-        # positional encoding needs to be pre-computed
-        src_mask = self.src_mask(src_padding_mask)
         src_embed = self.src_vocab_embed(src)
-        src_embed += src_pos
         
-        fp_embed = self.fingerprint_embed(x_fp)
-        fp_pos = self.positional_encoding(fp_padding_mask)
+        src_embed += src_pos
         fp_embed += fp_pos
 
         mm_embed = torch.cat([src_embed, fp_embed], dim=1)
-        memory = mm_embed
+        _, mm_len, _ = mm_embed.shape
+        mm_mask = src_padding_mask.unsqueeze(1).expand(bs, mm_len, src_len)
 
-        for block in self.encoder:
-            memory = block(src_embed, memory, src_mask)
+        memory = mm_embed
         
-        return self.encoder_norm(memory), src_padding_mask
+        for block in self.encoder:
+            memory = block(src_embed, memory, mm_mask) 
+        
+        return self.encoder_norm(memory), mm_embed
     
-    def decode(self, y, memory, src_padding_mask, 
+    def decode(self, y, memory, mm_embed, 
                tgt_char_to_idx, tgt_idx_to_char, T=1.0):
 
         tgt, tgt_padding_mask, tgt_pos = gen_right(
@@ -371,15 +406,21 @@ class AugmentedTransformer(nn.Module):
             max_len=self.maxlen
         )
         
+        bs, tgt_len = tgt.shape        
+        _, mem_len, _ = memory.shape
+        
         tgt = tgt.to(memory.device)
         tgt_padding_mask = tgt_padding_mask.to(memory.device)
         tgt_pos = tgt_pos.to(memory.device)
 
-        memory_mask = self.memory_mask([tgt_padding_mask, src_padding_mask])
-
-        tgt_mask = self.tgt_mask(tgt_padding_mask)
         tgt_embed = self.tgt_vocab_embed(tgt)
         tgt_embed = self.dropout(tgt_embed + tgt_pos)
+        
+        tgt_mask = tgt_padding_mask.unsqueeze(1).expand(bs, tgt_len, tgt_len)
+        tgt_mask = tgt_mask * torch.tril(torch.ones(bs, tgt_len, tgt_len)).to(tgt.device)
+
+        mm_words = mm_embed[:, :, 0]
+        memory_mask = mm_words.data.eq(0).unsqueeze(1).expand(bs, tgt_len, mem_len).long()
 
         output = tgt_embed
 
