@@ -102,7 +102,7 @@ class Trainer:
         if self.rank == 0:
             self.logger.info(f"Number of params: {self.bare_model.count_parameters()}")
 
-        self.validation()
+        # self.validation()
         self.bare_model.train()
         for epoch in range(self.current_iter, self.total_iters):
             epoch_logs = defaultdict(float)
@@ -129,10 +129,6 @@ class Trainer:
                         self.writer.add_scalar(k, v, self.global_step)
                         epoch_logs[f"{k}_epoch"] += v
 
-                    for tag, value in self.bare_model.get_net_parameters():
-                        if value.grad is not None:
-                            self.writer.add_histogram("grad/" + tag, value.grad.cpu(), epoch)
-
                 if self.rank == 0 and self.global_step % self.print_interval == 0:
                     avg_time = timer.get_avg_time()
                     data_avg_time = data_timer.get_avg_time()
@@ -153,6 +149,11 @@ class Trainer:
                     assert "_epoch" in k
                     epoch_logs[k] /= len(self.train_dataloader)
                     self.writer.add_scalar(k, epoch_logs[k], epoch)
+
+                for tag, value in self.bare_model.get_net_parameters():
+                    if value.grad is not None:
+                        self.writer.add_histogram("grad/" + tag, value.grad.cpu(), epoch)
+
             
             if self.rank == 0 and epoch > 0 and epoch % self.val_interval == 0:
                 self.validation()
