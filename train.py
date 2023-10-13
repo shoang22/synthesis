@@ -129,6 +129,10 @@ class Trainer:
                         self.writer.add_scalar(k, v, self.global_step)
                         epoch_logs[f"{k}_epoch"] += v
 
+                    for tag, value in self.bare_model.get_net_parameters():
+                        if value.grad is not None:
+                            self.writer.add_histogram("grad/" + tag, value.grad.cpu(), epoch)
+
                 if self.rank == 0 and self.global_step % self.print_interval == 0:
                     avg_time = timer.get_avg_time()
                     data_avg_time = data_timer.get_avg_time()
