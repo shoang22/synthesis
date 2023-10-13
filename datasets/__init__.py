@@ -10,11 +10,11 @@ def get_dataset_distributed(world_size, rank, opt):
     else:
         raise NotImplementedError(f"{dataset_name} is not implemented")
 
-    train_dataset = TD(opt["datasets"])
+    train_dataset = TD(opt["datasets"]["train"])
     collate_fn = Collator(opt["model"]["tokenizer"])
 
     if rank == 0:
-        val_dataset = VD(opt["datasets"])
+        val_dataset = VD(opt["datasets"]["val"])
         logger = logging.getLogger("base")
 
         logger.info(f"Train dataset size: {len(train_dataset)}")
