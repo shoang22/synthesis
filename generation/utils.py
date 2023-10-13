@@ -21,10 +21,10 @@ class suppress_stderr(object):
 
 
 @torch.no_grad()
-def gen_greedy(model, T, src, max_len, tgt_char_to_idx, tgt_idx_to_char,
+def gen_greedy(model, T, src, fp, fp_padding_mask, max_len, tgt_char_to_idx, tgt_idx_to_char,
                src_char_to_idx, src_idx_to_char):
 
-    src_encoded, src_mask = model.encode(src, src_char_to_idx, src_idx_to_char)
+    src_encoded, src_mask = model.encode(src, fp, fp_padding_mask, src_char_to_idx, src_idx_to_char)
 
     res = ""
     score = 0.0
@@ -56,15 +56,15 @@ def gen_greedy(model, T, src, max_len, tgt_char_to_idx, tgt_idx_to_char,
 
 @torch.no_grad()
 def gen_beam(
-    model, T, src, max_len, tgt_char_to_idx, tgt_idx_to_char, 
+    model, T, src, fp, fp_padding_mask, max_len, tgt_char_to_idx, tgt_idx_to_char, 
     src_char_to_idx, src_idx_to_char, beam_size = 1
 ):
     tgt_vocab_size = len(tgt_char_to_idx)
 
-    src_encoded, src_mask = model.encode(src, src_char_to_idx, src_idx_to_char)
+    src_encoded, src_mask = model.encode(src, fp, fp_padding_mask, src_char_to_idx, src_idx_to_char)
 
     if beam_size == 1:
-        return [gen_greedy(model, T, src, max_len=max_len, 
+        return [gen_greedy(model, T, src, max_len=max_len, fp=fp, fp_padding_mask=fp_padding_mask, 
                            tgt_char_to_idx=tgt_char_to_idx, tgt_idx_to_char=tgt_idx_to_char,
                            src_char_to_idx=src_char_to_idx, src_idx_to_char=src_idx_to_char)]
 

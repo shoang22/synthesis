@@ -7,6 +7,10 @@ def get_dataset_distributed(world_size, rank, opt):
         from .retro_dataset import RetroTrainDataset as TD
         from .retro_dataset import RetroValDataset as VD
         from .retro_dataset import RetroCollator as Collator
+    elif dataset_name == "fingerprints":
+        from .retro_fingerprint_dataset import RetroTrainDataset as TD
+        from .retro_fingerprint_dataset import RetroValDataset as VD
+        from .retro_fingerprint_dataset import RetroCollator as Collator
     else:
         raise NotImplementedError(f"{dataset_name} is not implemented")
 

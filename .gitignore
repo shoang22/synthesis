@@ -5,4 +5,5 @@ temp/
 uspto-*
 **/__pycache__/
 **/test/
-experiments/
+experiments
+cfg/*

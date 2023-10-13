@@ -10,11 +10,10 @@ class RetroDataset(Dataset):
     def __init__(self, opt, transforms):
         super().__init__()
         self.logger = logging.getLogger("base")
-        with open(opt["data_path"], "r") as f:
+        with open(opt["data_root"], "r") as f:
             self.data = f.readlines()[1:] # skip header
 
         self.transforms = transforms
-        self.fingerprint_size = opt["fingerprint_size"]
     
     def __getitem__(self, idx):
         left, right = self.data[idx].split(",")
@@ -25,15 +24,8 @@ class RetroDataset(Dataset):
             for t in self.transforms:
                 src, tgt = t(src, tgt)
 
-        sm = AllChem.MolFromSmiles(src)
-        tm = AllChem.MolFromSmiles(tgt)
-        sfp = AllChem.GetMorganFingerprintAsBitVect(sm, 2, nBits=self.fingerprint_size)  
-        tfp = AllChem.GetMorganFingerprintAsBitVect(tm, 2, nBits=self.fingerprint_size)  
-        sfp = np.array(sfp)
-        tfp = np.array(tfp)
-        
         assert tgt is not None, f"target at idx {idx} returned none after transform"
-        return src, tgt, sfp, tfp
+        return src, tgt
 
     def __len__(self):
         return len(self.data)
@@ -75,6 +67,7 @@ class RetroCollator:
     def __init__(self, opt):
         self.src_tokenizer = tokenizer_from_vocab(opt["src_vocab"])
         self.tgt_tokenizer = tokenizer_from_vocab(opt["tgt_vocab"])
+        self.fingerprint_size = opt["fingerprint_size"]
 
     def __call__(self, batch):
         batch_size = len(batch)
@@ -83,14 +76,23 @@ class RetroCollator:
 
         left, right = [], []
         left_fp, right_fp = [], []
-        for src, tgt, sfp, tfp in batch:
+
+        for src, tgt in batch:
+            sfp = src
+
+            if src[0] == ".":
+                sfp = src[1:]
+
+            sfp = AllChem.MolFromSmiles(sfp)
+            sfp = AllChem.GetMorganFingerprintAsBitVect(sfp, 2, nBits=self.fingerprint_size)  
+            sfp = np.array(sfp)
+        
             left.append(src)
             right.append(tgt)
             left_fp.append(torch.from_numpy(sfp))
-            right_fp.append(torch.from_numpy(tfp))
 
-        left_fp = torch.stack(left_fp, dim=0)
-        right_fp = torch.stack(right_fp, dim=0)
+        x_fp = torch.stack(left_fp, dim=0)
+        mx_fp = torch.ones_like(x_fp)
 
         nl = len(left[0])
         nr = len(right[0])
@@ -143,8 +145,8 @@ class RetroCollator:
         return {
             "src": x,
             "tgt": y,
-            "src_fp": left_fp,
-            "tgt_fp": right_fp,
+            "fp": x_fp,
+            "fp_padding_mask": mx_fp,
             "src_padding_mask": mx,
             "tgt_padding_mask": my,
             "gt": z 

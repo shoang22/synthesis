@@ -114,7 +114,6 @@ class SelfLayer(nn.Module):
             self.linear_qkvs.append(qkv_head) 
 
     def forward(self, inputs):
-        # inputs: [x_i, x_t, x_t, x_t]
         out = []
 
         for linear_Q, linear_K, linear_V in self.linear_qkvs:
@@ -135,8 +134,6 @@ class SelfLayer(nn.Module):
 
         return torch.cat(out, dim=-1)
 
-
-# TODO: add multimodal attention
 
 class EncoderLayer(nn.Module):
     def __init__(
@@ -167,14 +164,21 @@ class EncoderLayer(nn.Module):
         x = self.self_attn([x, x, x, attn_mask])
         return self.dense1(x)
     
+    def _mma_block(self, x, x_mm, attn_mask):
+        x = self.self_attn([x_mm, x, x, attn_mask])
+        return self.dense1(x)
+    
     def _ff_block(self, x):
         x = self.c2(self.relu(self.c1(x)))
         return self.dropout2(x)
 
-    def forward(self, x, mask):
-        x = x + self._sa_block(self.dropout1(self.norm1(x)), mask)
-        x = x + self._ff_block(self.norm2(x))
-        return x
+    def forward(self, x, x_mm, mask):
+        # remember to call dropout after attn
+        x_norm = self.norm1(x)
+        x_mm_norm = self.norm1(x_mm)
+        out = x_mm + self._mma_block(x_norm, x_mm_norm, mask)
+        out = out + self._ff_block(self.norm2(self.dropout1(out)))
+        return out
 
 
 class DecoderLayer(nn.Module):
@@ -303,10 +307,11 @@ class AugmentedTransformer(nn.Module):
         fp_embed += fp_pos
         src_embed += src_pos
 
-        memory = src_embed
+        mm_embed = torch.cat([src_embed, fp_embed], dim=1)
+        memory = mm_embed
 
         for block in self.encoder:
-            memory = block(memory, src_mask)
+            memory = block(src_embed, memory, src_mask)
         
         memory = self.encoder_norm(memory)
         memory_mask = self.memory_mask([tgt_padding_mask, src_padding_mask])
@@ -325,7 +330,7 @@ class AugmentedTransformer(nn.Module):
 
         return self.generator(output)
     
-    def encode(self, x, src_char_to_ix, src_idx_to_char):
+    def encode(self, x, x_fp, fp_padding_mask, src_char_to_ix, src_idx_to_char):
         
         # src input will be a tensor
         src, src_padding_mask, src_pos = gen_left(
@@ -343,11 +348,16 @@ class AugmentedTransformer(nn.Module):
         src_mask = self.src_mask(src_padding_mask)
         src_embed = self.src_vocab_embed(src)
         src_embed += src_pos
+        
+        fp_embed = self.fingerprint_embed(x_fp)
+        fp_pos = self.positional_encoding(fp_padding_mask)
+        fp_embed += fp_pos
 
-        memory = src_embed
+        mm_embed = torch.cat([src_embed, fp_embed], dim=1)
+        memory = mm_embed
 
         for block in self.encoder:
-            memory = block(memory, src_mask)
+            memory = block(src_embed, memory, src_mask)
         
         return self.encoder_norm(memory), src_padding_mask
     

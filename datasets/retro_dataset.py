@@ -1,8 +1,6 @@
 from torch.utils.data import Dataset
 import logging
 import torch
-# import sys
-# sys.path.append("./")
 from generation.utils import suppress_stderr, tokenizer_from_vocab
 from rdkit import Chem
 

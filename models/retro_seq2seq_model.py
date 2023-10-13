@@ -95,6 +95,8 @@ class RetroSeq2SeqModel(nn.Module):
 
             # preprocessing should be in dataset class
             src = val_data["src"]
+            fp = val_data["fp"]
+            fp_padding_mask = val_data["fp_padding_mask"]
 
             for i in range(src.shape[0]):
                 answer = []
@@ -105,6 +107,8 @@ class RetroSeq2SeqModel(nn.Module):
                         self.net, 
                         self.T, 
                         src[i],
+                        fp[i],
+                        fp_padding_mask[i],
                         self.maxlen,
                         self.tgt_char_to_idx,
                         self.tgt_idx_to_char,
