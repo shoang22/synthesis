@@ -152,7 +152,7 @@ def gen_beam(
 def decode_to_string(tokens_arr, idx_to_char):
     if isinstance(tokens_arr, torch.Tensor):
         tokens_arr = tokens_arr.tolist()
-    return "".join([idx_to_char[i] for i in tokens_arr])
+    return "".join([idx_to_char[i] for i in tokens_arr]).strip()
 
 
 def tokenizer_from_vocab(vocab_path):

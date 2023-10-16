@@ -87,7 +87,7 @@ class RetroSeq2SeqModel(nn.Module):
         ex_5 = 0
 
         for idx, val_data in enumerate(dataloader):
-            if num_text == 500:
+            if num_text > 100:
                 break
 
             cnt += 1

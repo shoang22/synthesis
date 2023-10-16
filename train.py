@@ -33,6 +33,8 @@ class Trainer:
         else:
             self.exp_name = opt["exp_name"]
 
+        self.proj_dir = opt["proj_dir"]
+
         if self.opt["train"]["load_iter"] == "auto":
             exp_path = osp.join(CHECKPOINT_PATH, self.exp_name)
             training_state_paths = sorted(glob.glob(osp.join(exp_path, "training_states/*.state")))
@@ -71,7 +73,7 @@ class Trainer:
         self.resume_training()
     
     def initialize_training_folders(self, from_scratch):
-        exp_path = osp.join(CHECKPOINT_PATH, self.exp_name)
+        exp_path = osp.join(self.proj_dir, CHECKPOINT_PATH, self.exp_name)
         model_folder = osp.join(exp_path, "models")
         training_state_folder = osp.join(exp_path, "training_states")
 
@@ -99,8 +101,6 @@ class Trainer:
         
         if self.rank == 0:
             self.logger.info(f"Number of params: {self.bare_model.count_parameters()}")
-
-        batches_per_iter = len(self.train_dataloader) / self.train_batch_size
 
         self.validation()
         self.bare_model.train()
@@ -142,13 +142,18 @@ class Trainer:
                     )
 
                 self.global_step += 1
-
                 data_timer.start()
             
             if self.rank == 0:
                 for k, _ in epoch_logs.items():
-                    epoch_logs[f"{k}_epoch"] /= batches_per_iter
+                    assert "_epoch" in k
+                    epoch_logs[k] /= len(self.train_dataloader)
                     self.writer.add_scalar(k, epoch_logs[k], epoch)
+
+                for tag, value in self.bare_model.get_net_parameters():
+                    if value.grad is not None:
+                        self.writer.add_histogram("grad/" + tag, value.grad.cpu(), epoch)
+
             
             if self.rank == 0 and epoch > 0 and epoch % self.val_interval == 0:
                 self.validation()
@@ -166,13 +171,15 @@ class Trainer:
                 self.save_training()
 
             self.current_iter += 1
+        
+        self.average_weights()
 
     def save_training(self):
         self.logger.info(f"Saving iter {self.current_iter}...")
         
         checkpoint = self.bare_model.get_checkpoint()
         pretrained_paths = {
-            x: MODEL_SAVE_PATH_FORMAT.format(self.exp_name, self.current_iter, x) for x in checkpoint.keys()
+            x: MODEL_SAVE_PATH_FORMAT.format(self.proj_dir, self.exp_name, self.current_iter, x) for x in checkpoint.keys()
         }
 
         state = {
@@ -183,10 +190,10 @@ class Trainer:
             "global_step": self.global_step,
         }
 
-        training_state_save_path = TRAINING_STATE_SAVE_PATH_FORMAT.format(self.exp_name, self.current_iter)
+        training_state_save_path = TRAINING_STATE_SAVE_PATH_FORMAT.format(self.proj_dir, self.exp_name, self.current_iter)
         torch.save(state, training_state_save_path)
         for ckpt_name, ckpt_state_dict in checkpoint.items():
-            torch.save(ckpt_state_dict, MODEL_SAVE_PATH_FORMAT.format(self.exp_name, self.current_iter, ckpt_name))
+            torch.save(ckpt_state_dict, MODEL_SAVE_PATH_FORMAT.format(self.proj_dir, self.exp_name, self.current_iter, ckpt_name))
 
     def resume_training(self):
         if self.load_iter == -1:
@@ -202,7 +209,7 @@ class Trainer:
             if self.rank == 0:
                 self.logger.info(f"Resuming training from iter {self.load_iter + 1}")
             
-            state_path = TRAINING_STATE_SAVE_PATH_FORMAT.format(self.exp_name, self.load_iter)
+            state_path = TRAINING_STATE_SAVE_PATH_FORMAT.format(self.proj_dir, self.exp_name, self.load_iter)
             if not osp.isfile(state_path):
                 raise ValueError(f"Training state for iter {self.load_iter} not found")
             
@@ -223,25 +230,28 @@ class Trainer:
 
     def average_weights(self):
         
-        checkpoint = self.bare_model.get_checkpoint()
-        weights_to_average = self.opt["weights_to_average"]
+        weights_to_average = self.opt["model"]["weights_to_average"]
         
         if len(weights_to_average) == 0:
             return
 
-        avg_state_dict = OrderedDict(list)
+        first_model_path = MODEL_SAVE_PATH_FORMAT.format(self.proj_dir, self.exp_name, weights_to_average[0], "net")
+        avg_state_dict = torch.load(first_model_path, map_location="cpu") 
 
-        for i in weights_to_average:
-            model_path = MODEL_SAVE_PATH_FORMAT.format(self.exp_name, i)
+        for i in weights_to_average[1:]:
+            model_path = MODEL_SAVE_PATH_FORMAT.format(self.proj_dir, self.exp_name, i, "net")
             curr_weights = torch.load(model_path, map_location="cpu")
             for k, v in curr_weights.items():
-                avg_state_dict.get(k, []).append(curr_weights)
+                avg_state_dict[k] = torch.cat((avg_state_dict[k], curr_weights[k]), dim=0)
 
         for k, v in avg_state_dict.items():
-            avg_state_dict[k] = torch.mean(torch.stack(v))
+            avg_state_dict[k] = torch.mean(v, dim=0, keepdim=True)
 
-        for ckpt_name, ckpt_state_dict in checkpoint.items():
-            torch.save(ckpt_state_dict, MODEL_SAVE_PATH_FORMAT.format(self.exp_name, "avg", ckpt_name))
+        avg_s = "".join([str(i) for i in weights_to_average])
+        out_path = MODEL_SAVE_PATH_FORMAT.format(self.proj_dir, self.exp_name, weights_to_average[-1], "net")
+        out_path = os.path.join(*out_path.split(os.path.sep)[:-1], f"avg_{avg_s}_net.pth")
+
+        torch.save(avg_state_dict, out_path)
 
     def validation(self):
         if self.rank != 0:
@@ -252,7 +262,7 @@ class Trainer:
             return
     
         timer = training_utils.AvgTimer()
-        val_save_root = VAL_SAMPLE_SAVE_PATH.format(self.exp_name, self.current_iter)
+        val_save_root = VAL_SAMPLE_SAVE_PATH.format(self.proj_dir, self.exp_name, self.current_iter)
         os.makedirs(val_save_root, exist_ok=True)
         self.logger.info("Evaluating metrics on validation set")
 
