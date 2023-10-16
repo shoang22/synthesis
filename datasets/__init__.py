@@ -7,14 +7,18 @@ def get_dataset_distributed(world_size, rank, opt):
         from .retro_dataset import RetroTrainDataset as TD
         from .retro_dataset import RetroValDataset as VD
         from .retro_dataset import RetroCollator as Collator
+    elif dataset_name == "fingerprints":
+        from .retro_fingerprint_dataset import RetroTrainDataset as TD
+        from .retro_fingerprint_dataset import RetroValDataset as VD
+        from .retro_fingerprint_dataset import RetroCollator as Collator
     else:
         raise NotImplementedError(f"{dataset_name} is not implemented")
 
-    train_dataset = TD(opt["datasets"])
+    train_dataset = TD(opt["datasets"]["train"])
     collate_fn = Collator(opt["model"]["tokenizer"])
 
     if rank == 0:
-        val_dataset = VD(opt["datasets"])
+        val_dataset = VD(opt["datasets"]["val"])
         logger = logging.getLogger("base")
 
         logger.info(f"Train dataset size: {len(train_dataset)}")
