@@ -102,7 +102,7 @@ class Trainer:
 
         batches_per_iter = len(self.train_dataloader) / self.train_batch_size
 
-        # self.validation()
+        self.validation()
         self.bare_model.train()
         for epoch in range(self.current_iter, self.total_iters):
             epoch_logs = defaultdict(float)

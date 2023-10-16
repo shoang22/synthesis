@@ -2,14 +2,15 @@ exp_name: augmented
 
 datasets:
   dataset_name: retro
-  data_path: uspto-50k/patents40k_x5MSShuf.csv
   debugging: 
     overfit: False
     subset: ~
   train:
+    data_root: data/uspto-50k/patents40k_x5MSShuf.csv
     batch_size: 32
     num_workers: 4
   val:
+    data_root: data/uspto-50k/patents40k_x5MSShuf.csv
     batch_size: 32
     num_workers: 1
 
