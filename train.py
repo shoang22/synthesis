@@ -102,7 +102,7 @@ class Trainer:
         if self.rank == 0:
             self.logger.info(f"Number of params: {self.bare_model.count_parameters()}")
 
-        self.validation()
+        # self.validation()
         self.bare_model.train()
         for epoch in range(self.current_iter, self.total_iters):
             epoch_logs = defaultdict(float)

@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import os
+import logging
 from collections import OrderedDict
 
 # import sys
@@ -29,6 +30,7 @@ class RetroSeq2SeqModel(nn.Module):
         self.T = opt["temperature"]
         
         self.opt = opt
+        self.logger = logging.getLogger("base")
 
     def get_net_parameters(self):
         return list(self.named_parameters())
