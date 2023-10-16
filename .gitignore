@@ -6,3 +6,4 @@ uspto-*
 **/__pycache__/
 **/test/
 experiments
+slurm_out/
