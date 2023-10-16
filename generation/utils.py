@@ -30,7 +30,7 @@ def gen_greedy(model, T, src, max_len, tgt_char_to_idx, tgt_idx_to_char,
     score = 0.0
     for i in range(1, max_len):
         p = model.decode(res, src_encoded, src_mask, 
-                         tgt_char_to_idx, tgt_idx_to_char, T).detach().cpu.numpy()
+                         tgt_char_to_idx, tgt_idx_to_char, T).detach().cpu().numpy()
         w = np.argmax(p)
         score -= math.log10( np.max(p))
         if w == tgt_char_to_idx["$"]:
@@ -92,25 +92,31 @@ def gen_beam(
             for i in range(cb):
                 p = model.decode(lines[i], src_encoded, src_mask, tgt_char_to_idx, tgt_idx_to_char, T)
                 p = p.detach().cpu().numpy()
-            for j in range(tgt_vocab_size):
-                nr[ i* tgt_vocab_size + j, 0] = -math.log10(p[j]) + scores[i]
-                nr[ i* tgt_vocab_size + j, 1] = i * 100 + j
+                for j in range(tgt_vocab_size):
+                    # add scores for each token for each beam
+                    # tokens are indexed by i * tgt_vocab_size + j
+                    # to separate them from other beams
+                    nr[ i* tgt_vocab_size + j, 0] = -math.log10(p[j]) + scores[i]
+                    nr[ i* tgt_vocab_size + j, 1] = i * 100 + j
 
+        # sort across all beams
+        # one beam can have multiple candidates if they make the cut
         y = nr [ nr[:, 0].argsort() ] ; # sorted negative log_probs
 
         new_beams = []
         new_scores = []
 
+        # taking top n_beams candidates...
         for i in range(beam_size):
-
+            # mod to get remainder (actual token)
             c = tgt_idx_to_char[ y[i, 1] % 100 ]
-            beamno = int( y[i, 1] ) // 100
+            beamno = int( y[i, 1] ) // 100 # this how we track the beam no of the current candidate
 
             if c == '$':
                 added = lines[beamno] + c
-                if added != "$": # if not empty string pred, add
+                if added != "$": # if not empty string pred, add to final beam
                     final_beams.append( [ lines[beamno] + c, y[i,0]])
-                beam_size -= 1
+                beam_size -= 1 # now we have one less beam to decode for
             else:
                 new_beams.append( lines[beamno] + c )
                 new_scores.append( y[i, 0])
@@ -135,8 +141,8 @@ def gen_beam(
             for r in reags:
                 r = r.replace("$", "")
                 m = Chem.MolFromSmiles(r)
-            if m is not None:
-                sms.add(Chem.MolToSmiles(m))
+                if m is not None:
+                    sms.add(Chem.MolToSmiles(m))
             if len(sms):
                 answer.append([sorted(list(sms)), final_beams[k][1] ])
 
