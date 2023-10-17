@@ -391,7 +391,8 @@ def gen_left(data, embed_dim, src_char_to_ix, max_len):
               x[cnt, i] = src_char_to_ix[ p] 
            except:
               x[cnt, i] = 1
-
+           
+           # insert embedding vector for ith batch in position i
            px[cnt, i] = geo[i, :embed_dim]
         mx[cnt, :i+1] = 1        
     return x, mx, px

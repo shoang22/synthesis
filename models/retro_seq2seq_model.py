@@ -158,7 +158,7 @@ class RetroSeq2SeqModel(nn.Module):
             if len(beams) == 0:
                 pred_text = ""
             else:
-                pred_text = [(beam, score) for beam, score in beams]
+                pred_text = [f"{str(beam)}\t{str(score)}" for beam, score in beams]
                 pred_text = "\n".join(pred_text)
 
             line = (
