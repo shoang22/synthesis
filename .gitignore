@@ -6,5 +6,5 @@ temp/
 **/test/
 slurm_out/*
 data/*
-cfg/*
+cfg/*_magnus.yml
 experiments
