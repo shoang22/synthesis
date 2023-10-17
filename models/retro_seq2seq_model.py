@@ -2,12 +2,9 @@ import torch
 import torch.nn as nn
 import os
 from collections import OrderedDict
-
-# import sys
-# sys.path.append("./")
 from models.losses import masked_loss
 from metrics import masked_acc
-from archs import define_arch
+from models.archs import define_arch
 from generation.utils import gen_beam, tokenizer_from_vocab
 
 class RetroSeq2SeqModel(nn.Module):
