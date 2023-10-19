@@ -3,7 +3,7 @@ import math
 from rdkit import Chem
 import os
 import torch
-
+import random
 
 class suppress_stderr(object):
     def __init__(self):
@@ -21,132 +21,146 @@ class suppress_stderr(object):
 
 
 @torch.no_grad()
-def gen_greedy(model, T, src, max_len, tgt_char_to_idx, tgt_idx_to_char,
-               src_char_to_idx, src_idx_to_char):
+def gen_greedy(model, T, src, src_padding_mask, 
+               max_len, bos_idx, eos_idx, device, **kwargs):
 
-    src_encoded, src_mask = model.encode(src, src_char_to_idx, src_idx_to_char)
+    src_encoded = model.encode(src, src_padding_mask)
 
-    res = ""
+    res = torch.ones(1,1).fill_(bos_idx).long().to(device)
     score = 0.0
+
     for i in range(1, max_len):
-        p = model.decode(res, src_encoded, src_mask, 
-                         tgt_char_to_idx, tgt_idx_to_char, T).detach().cpu().numpy()
-        w = np.argmax(p)
-        score -= math.log10( np.max(p))
-        if w == tgt_char_to_idx["$"]:
+        res_padding_mask = torch.ones_like(res).long().to(device)
+        p = model.decode(res, res_padding_mask, src_encoded, src_padding_mask, T)
+        w = torch.argmax(p, keepdim=True).unsqueeze(0)
+        score -= torch.log10(torch.max(p))
+        if w == eos_idx:
             break
-        try:
-            res += tgt_idx_to_char[w]
-        except:
-            res += "?"
+        
+        # try to find the character in the vocab
+        res = torch.cat([res, w], dim=-1)
 
-    reags = res.split(".")
-    sms = set() 
-    with suppress_stderr():
-        for r in reags:
-            r = r.replace("$", "")
-            m = Chem.MolFromSmiles(r)
-            if m is not None:
-                sms.add(Chem.MolToSmiles(m))
-        if len(sms):
-            return [sorted(list(sms)), score ]
-
-    return ["", 0.0]
-
+    return res, score[None, :]
+        
 
 @torch.no_grad()
-def gen_beam(
-    model, T, src, max_len, tgt_char_to_idx, tgt_idx_to_char, 
-    src_char_to_idx, src_idx_to_char, beam_size = 1
-):
-    tgt_vocab_size = len(tgt_char_to_idx)
+def gen_beam(model, T, src, src_padding_mask, 
+             max_len, bos_idx, eos_idx, device, beam_size = 1):
 
-    src_encoded, src_mask = model.encode(src, src_char_to_idx, src_idx_to_char)
+    src_encoded = model.encode(src, src_padding_mask)
 
     if beam_size == 1:
-        return [gen_greedy(model, T, src, max_len=max_len, 
-                           tgt_char_to_idx=tgt_char_to_idx, tgt_idx_to_char=tgt_idx_to_char,
-                           src_char_to_idx=src_char_to_idx, src_idx_to_char=src_idx_to_char)]
+        return [gen_greedy(model, T, src, src_padding_mask, 
+                           max_len=max_len, bos_idx=bos_idx, eos_idx=eos_idx, device=device)]
 
-    lines = []
+    lines = torch.zeros(beam_size, max_len).long().to(device)
+    lengths = torch.zeros(beam_size, ).long().to(device)
+    lines[:, 0] = bos_idx
     scores = []
-    final_beams = []
+
+    final_beams = torch.zeros(beam_size, max_len).long().to(device)
+    final_scores = torch.zeros(beam_size, ).to(device)
+    final_lengths = torch.zeros(beam_size, ).to(device)
+    final_row_idx = 0
 
     for i in range(beam_size):
-        lines.append("")
         scores.append(0.0)
 
     for step in range(max_len):
         if step == 0:
-            # during first step, top num_beam preds are used as first beam tokens
-            p = model.decode("", src_encoded, src_mask, tgt_char_to_idx, tgt_idx_to_char, T)
-            p = p.detach().cpu().numpy()
-            nr = np.zeros((tgt_vocab_size, 2)) # [prob(word_i), i]
-            for i in range(tgt_vocab_size):
-                nr [i ,0 ] = -math.log(p[i])
+            res = torch.ones(1,1).fill_(bos_idx).long().to(device)
+            res_padding_mask = torch.ones_like(res).long().to(device)
+            # during first step, we generate the log prob scores for all the words in the vocab
+            p = model.decode(res, res_padding_mask, src_encoded, src_padding_mask, T)
+            nr = torch.zeros((p.shape[-1], 2)).to(device) # [prob(word_i), i]
+            for i in range(p.shape[-1]):
+                nr [i ,0 ] = -torch.log(p[i])
                 nr [i ,1 ] = i
+            
+            lengths += 1
+            
         else:
             # cb = beam_size
+            # will always be beam size since we prune
             cb = len(lines)
-            nr = np.zeros(( cb * tgt_vocab_size, 2))
+            nr = torch.zeros(( cb * p.shape[-1], 2 )).to(device)
             for i in range(cb):
-                p = model.decode(lines[i], src_encoded, src_mask, tgt_char_to_idx, tgt_idx_to_char, T)
-                p = p.detach().cpu().numpy()
-                for j in range(tgt_vocab_size):
+                cand_padding_mask = torch.ones_like(lines[i]).unsqueeze(0).long().to(device)
+                cand_padding_mask[:, step:] = 0
+                p = model.decode(lines[i][None, :], cand_padding_mask, src_encoded, src_padding_mask, T)
+                for j in range(p.shape[-1]):
                     # add scores for each token for each beam
                     # tokens are indexed by i * tgt_vocab_size + j
                     # to separate them from other beams
-                    nr[ i* tgt_vocab_size + j, 0] = -math.log10(p[j]) + scores[i]
-                    nr[ i* tgt_vocab_size + j, 1] = i * 100 + j
+                    nr[ i* p.shape[-1] + j, 0] = -torch.log10(p[j]) + scores[i]
+                    nr[ i* p.shape[-1] + j, 1] = i * 100 + j
+            
+            lengths += 1
 
         # sort across all beams
         # one beam can have multiple candidates if they make the cut
-        y = nr [ nr[:, 0].argsort() ] ; # sorted negative log_probs
+        y = nr[nr[:, 0].argsort()] ; # sorted negative log_probs
 
-        new_beams = []
+        new_beams = torch.zeros(beam_size, max_len).long().to(device)
+        new_beams_mask = torch.ones(beam_size, ).bool().to(device)
         new_scores = []
 
         # taking top n_beams candidates...
         for i in range(beam_size):
             # mod to get remainder (actual token)
-            c = tgt_idx_to_char[ y[i, 1] % 100 ]
+
+            # for debugging
+            if random.random() > 0.8:
+                c = eos_idx
+            else:
+                c = y[i, 1] % 100
             beamno = int( y[i, 1] ) // 100 # this how we track the beam no of the current candidate
 
-            if c == '$':
-                added = lines[beamno] + c
-                if added != "$": # if not empty string pred, add to final beam
-                    final_beams.append( [ lines[beamno] + c, y[i,0]])
+            if c == eos_idx:
+                lines[beamno, step] = c
+                if torch.sum(lines[beamno]) != eos_idx: # if not empty string pred, add to final beam
+                    # omit adding eos token 
+                    # remember, we do not remove candidates from final_beam
+                    # as the conditional prob score only decreases as more tokens are added
+                    final_beams[final_row_idx] = lines[beamno]
+                    final_scores[final_row_idx] = y[i, 0]
+                    final_lengths[final_row_idx] = lengths[i]
+                    final_row_idx += 1
                 beam_size -= 1 # now we have one less beam to decode for
+                new_beams_mask[i] = False
+                lengths[i] = 0
             else:
-                new_beams.append( lines[beamno] + c )
-                new_scores.append( y[i, 0])
+                new_beams[i, :] = lines[beamno]
+                new_beams[i, step] = c
+                new_scores.append(y[i, 0].item())
 
-        lines = new_beams
+        # ISSUE: during 2nd > iteration after beam_size has been reduced,
+        # len(scores) is < n_beams while len(lines) is still n_beams
+
+        # prune
+        new_beams = new_beams[new_beams_mask]
+        assert new_beams.shape[0] == beam_size
+        lines = new_beams.clone()
         scores = new_scores
+        lengths = lengths[new_beams_mask]
 
         if len(lines) == 0: break
 
-    for i in range(len(final_beams)):
-        # score divided by length (longer = better)
-        final_beams[i][1] = final_beams[i][1] / len(final_beams[i][0])
+    # remove blank beams
+    final_beam_idx  = torch.sum(final_beams, dim=-1) != 0
+    final_beams = final_beams[final_beam_idx]
+    final_scores = final_scores[final_beam_idx]
+    final_lengths = final_lengths[final_beam_idx]
 
-    final_beams = list(sorted(final_beams, key=lambda x:x[1]))[:5]
-    answer = []
+    if len(final_beams) == 0:
+        return None, None
 
-    for k in range(5):
-        reags = set(final_beams[k][0].split("."))
-        sms = set()
+    final_scores = final_scores / final_lengths
+    final_beams = final_beams[final_scores.argsort()][:5]
+    final_scores = final_scores.sort()[0]
 
-        with suppress_stderr():
-            for r in reags:
-                r = r.replace("$", "")
-                m = Chem.MolFromSmiles(r)
-                if m is not None:
-                    sms.add(Chem.MolToSmiles(m))
-            if len(sms):
-                answer.append([sorted(list(sms)), final_beams[k][1] ])
-
-    return answer
+    assert len(final_beams) == len(final_scores)
+    return final_beams, final_scores
 
 
 def decode_to_string(tokens_arr, idx_to_char):
@@ -166,3 +180,36 @@ def tokenizer_from_vocab(vocab_path):
                 tokenizer[char] = idx
 
     return tokenizer
+
+
+if __name__ == "__main__":
+    import yaml
+    import sys
+    sys.path.append("./")
+    from models.archs.augmentedtransformer import AugmentedTransformer
+
+    path = "cfg/augmented.yml"
+    with open(path, "r") as f:
+        cfg = yaml.safe_load(f)
+
+    mdl_opt = cfg["model"]["net"]["opt"]
+    mdl_opt["src_vocab_size"] = 16
+    mdl_opt["tgt_vocab_size"] = 16
+
+    model = AugmentedTransformer(**mdl_opt)
+    
+    bs = 8
+    l = 10
+    max_len = 150
+    bos_idx = 0
+    eos_idx = 3
+
+    x = torch.randint(0, 10, (bs, l))
+    mx = torch.ones_like(x)
+    mx[-2:, -3:] = 0
+    for i in range(bs):
+        yhat = gen_beam(model, 1.0, x[None, i], mx[None, i], 
+                          max_len, bos_idx, eos_idx, beam_size=3)
+        print(yhat)
+
+

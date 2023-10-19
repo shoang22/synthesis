@@ -2,10 +2,15 @@ import torch
 import torch.nn as nn
 import os
 from collections import OrderedDict
+
+import sys
+sys.path.append("./")
+
 from models.losses import masked_loss
 from metrics import masked_acc
 from models.archs import define_arch
-from generation.utils import gen_beam, tokenizer_from_vocab
+from generation.utils import gen_beam, tokenizer_from_vocab, suppress_stderr
+from rdkit import Chem
 
 class RetroSeq2SeqModel(nn.Module):
     def __init__(self, opt):
@@ -17,6 +22,8 @@ class RetroSeq2SeqModel(nn.Module):
         self.tgt_char_to_idx = tokenizer_from_vocab(opt["tokenizer"]["src_vocab"])
         self.tgt_idx_to_char = {idx: char for char, idx in self.tgt_char_to_idx.items()}
         self.maxlen = opt["max_decoding_len"]
+        self.bos = self.tgt_char_to_idx["^"]
+        self.eos = self.tgt_char_to_idx["$"]
 
         opt["net"]["opt"]["src_vocab_size"] = len(self.src_char_to_idx)
         opt["net"]["opt"]["tgt_vocab_size"] = len(self.tgt_char_to_idx)
@@ -87,52 +94,81 @@ class RetroSeq2SeqModel(nn.Module):
             if num_text > 100:
                 break
 
-            cnt += 1
+            lines = []
             val_data = {k: v.to(self.device) for k, v in val_data.items()}
 
             # preprocessing should be in dataset class
             src = val_data["src"]
+            src_padding_mask = val_data["src_padding_mask"]
 
             for i in range(src.shape[0]):
-                answer = []
-                beams = []
 
-                try:
-                    beams = gen_beam(
-                        self.net, 
-                        self.T, 
-                        src[i],
-                        self.maxlen,
-                        self.tgt_char_to_idx,
-                        self.tgt_idx_to_char,
-                        self.src_char_to_idx,
-                        self.src_idx_to_char,
-                        self.beam_size
-                    )
-                except KeyboardInterrupt:
-                    return
-                except Exception as e:
-                    pass
+                product = "".join([self.src_idx_to_char[c] for c in list(val_data["src"][i].detach().cpu().numpy())])
+                reagents = "".join([self.src_idx_to_char[c] for c in list(val_data["tgt"][i].detach().cpu().numpy())]).strip()
+                
+                product = product.strip()
+                reagents = reagents.strip().replace(self.tgt_idx_to_char[self.bos], "")
+                
+                y_true = []
 
-                if len (beams) == 0:
+                reags_true = set(reagents.split("."))
+                sms_true = set()
+                with suppress_stderr():
+                    for r in reags_true:
+                        m = Chem.MolFromSmiles(r)
+                        if m is not None:
+                            sms_true.add(Chem.MolToSmiles(m))
+                    if len(sms_true):
+                        y_true = sorted(list(sms_true))
+
+                if len(y_true) == 0:
+                    continue
+                
+                cnt += 1
+
+                beams, scores = gen_beam(
+                    self.net, 
+                    self.T, 
+                    src[None, i],
+                    src_padding_mask[None, i],
+                    self.maxlen,
+                    self.bos,
+                    self.eos,
+                    self.device,
+                    self.beam_size
+                )
+
+                if not isinstance(beams, torch.Tensor):
                     continue
 
-                answer_s = set(answer)
+                y_pred = []
+                n_beams = len(beams)
+                for b_idx in range(n_beams):
+                    candidate = "".join([self.tgt_idx_to_char[c] for c in list(beams[b_idx].detach().cpu().numpy())]).strip()
 
-                ans = []
-                for k in range(len(beams)):
-                    ans.append([ beams[k][0], beams[k][1] ])
+                    reags = set(candidate.split("."))
+                    sms = set()
 
-                for step, beam in enumerate(ans):
-                    right = answer_s.intersection(set(beam[0]))
+                    # normalizing the output
+                    with suppress_stderr():
+                        for r in reags:
+                            m = Chem.MolFromSmiles(r)
+                            if m is not None:
+                                sms.add(Chem.MolToSmiles(m))
+                        if len(sms):
+                            y_pred.append([sorted(list(sms)), scores[b_idx]])
+                
+                y_s = set(y_true)
+
+                for step, beam in enumerate(y_pred):
+                    right = y_s.intersection(set(beam[0]))
 
                     if len(right) == 0: continue
-                    if len(right) == len(answer):
+                    if len(right) == len(y_true):
                         if step == 0:
                             ex_1 += 1
                             ex_3 += 1
                             ex_5 += 1
-                            print("CNT: ", cnt, ex_1 /cnt *100.0, answer, beam[1], beam[1] / len(".".join(answer)) , 1.0 )
                             break
                         if step < 3:
                             ex_3 += 1
@@ -143,32 +179,31 @@ class RetroSeq2SeqModel(nn.Module):
                             break
                     break
 
+
+                # use beams because y_pred might be none
+                pred_text = []
+                for b_idx in range(n_beams):
+                    beam_text = "".join([self.tgt_idx_to_char[c.item()] for c in beams[b_idx]])
+                    beam_text = beam_text.strip().replace(self.tgt_idx_to_char[self.eos], "")
+                    neg_log_prob = scores[b_idx].item()
+                    pred_text.append(f"{beam_text}\t{neg_log_prob:.4f}")
+
+                pred_text = "\n".join(pred_text)
+
+                line = (
+                    f"INPUT: {product}\n\nPRED: \n{pred_text}\n\nGOLD: {reagents}\n"
+                    "{}\n".format(30 * "-")
+                )
+                lines.append(line)
+
+            with open(os.path.join(save_root, f"{num_text:08d}.txt"), "w", encoding="utf-8") as f:
+                f.write("".join(lines))
+
             tb_logs.update({
                 "metrics/top_k/1": ex_1 / cnt * 100.0,
                 "metrics/top_k/3": ex_3 / cnt * 100.0,
                 "metrics/top_k/5": ex_5 * 100.0 / cnt
             })
-
-            # restructure strings
-            lines = []
-            
-            input_text = "".join([self.src_idx_to_char[c] for c in list(val_data["src"][i].detach().cpu().numpy())])
-            gold = "".join([self.src_idx_to_char[c] for c in list(val_data["tgt"][i].detach().cpu().numpy())])
-
-            if len(beams) == 0:
-                pred_text = ""
-            else:
-                pred_text = [f"{str(beam)}\t{str(score)}" for beam, score in beams]
-                pred_text = "\n".join(pred_text)
-
-            line = (
-                f"INPUT: {input_text}\n\nPRED: \n{pred_text}\n\nGOLD: {gold}\n"
-                "{}\n".format(30 * "-")
-            )
-            lines.append(line)
-
-            with open(os.path.join(save_root, f"{num_text:08d}.txt"), "w", encoding="utf-8") as f:
-                f.write("".join(lines))
 
             num_text += val_data["src"].shape[0]
 
@@ -180,11 +215,11 @@ if __name__ == "__main__":
     from torch.utils.data import DataLoader
     import yaml
 
-    cfg_file = "cfg/augmented.yml"
+    cfg_file = "cfg/augmented_debug.yml"
     with open(cfg_file, "r") as f:
         opt = yaml.safe_load(f)
     
-    val_ds = RetroValDataset(opt["datasets"])
+    val_ds = RetroValDataset(opt["datasets"]["val"])
     val_ds.debug()
 
     collate_fn = RetroCollator(opt["model"]["tokenizer"])
