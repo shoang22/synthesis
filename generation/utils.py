@@ -3,7 +3,7 @@ import math
 from rdkit import Chem
 import os
 import torch
-
+import random
 
 class suppress_stderr(object):
     def __init__(self):
@@ -22,15 +22,15 @@ class suppress_stderr(object):
 
 @torch.no_grad()
 def gen_greedy(model, T, src, src_padding_mask, 
-               max_len, bos_idx, eos_idx, **kwargs):
+               max_len, bos_idx, eos_idx, device, **kwargs):
 
     src_encoded = model.encode(src, src_padding_mask)
 
-    res = torch.ones(1,1).fill_(bos_idx).long()
+    res = torch.ones(1,1).fill_(bos_idx).long().to(device)
     score = 0.0
 
     for i in range(1, max_len):
-        res_padding_mask = torch.ones_like(res).long()
+        res_padding_mask = torch.ones_like(res).long().to(device)
         p = model.decode(res, res_padding_mask, src_encoded, src_padding_mask, T)
         w = torch.argmax(p, keepdim=True).unsqueeze(0)
         score -= torch.log10(torch.max(p))
@@ -40,27 +40,27 @@ def gen_greedy(model, T, src, src_padding_mask,
         # try to find the character in the vocab
         res = torch.cat([res, w], dim=-1)
 
-    return res, score
+    return res, score[None, :]
         
 
 @torch.no_grad()
 def gen_beam(model, T, src, src_padding_mask, 
-             max_len, bos_idx, eos_idx, beam_size = 1):
+             max_len, bos_idx, eos_idx, device, beam_size = 1):
 
     src_encoded = model.encode(src, src_padding_mask)
 
     if beam_size == 1:
         return [gen_greedy(model, T, src, src_padding_mask, 
-                           max_len=max_len, bos_idx=bos_idx, eos_idx=eos_idx)]
+                           max_len=max_len, bos_idx=bos_idx, eos_idx=eos_idx, device=device)]
 
-    lines = torch.zeros(beam_size, max_len).long()
-    lengths = torch.zeros(beam_size, ).long()
+    lines = torch.zeros(beam_size, max_len).long().to(device)
+    lengths = torch.zeros(beam_size, ).long().to(device)
     lines[:, 0] = bos_idx
     scores = []
 
-    final_beams = torch.zeros(beam_size, max_len).long()
-    final_scores = torch.zeros(beam_size, )
-    final_lengths = torch.zeros(beam_size, )
+    final_beams = torch.zeros(beam_size, max_len).long().to(device)
+    final_scores = torch.zeros(beam_size, ).to(device)
+    final_lengths = torch.zeros(beam_size, ).to(device)
     final_row_idx = 0
 
     for i in range(beam_size):
@@ -68,11 +68,11 @@ def gen_beam(model, T, src, src_padding_mask,
 
     for step in range(max_len):
         if step == 0:
-            res = torch.ones(1,1).fill_(bos_idx).long()
-            res_padding_mask = torch.ones_like(res).long()
+            res = torch.ones(1,1).fill_(bos_idx).long().to(device)
+            res_padding_mask = torch.ones_like(res).long().to(device)
             # during first step, we generate the log prob scores for all the words in the vocab
             p = model.decode(res, res_padding_mask, src_encoded, src_padding_mask, T)
-            nr = torch.zeros((p.shape[-1], 2)) # [prob(word_i), i]
+            nr = torch.zeros((p.shape[-1], 2)).to(device) # [prob(word_i), i]
             for i in range(p.shape[-1]):
                 nr [i ,0 ] = -torch.log(p[i])
                 nr [i ,1 ] = i
@@ -83,9 +83,9 @@ def gen_beam(model, T, src, src_padding_mask,
             # cb = beam_size
             # will always be beam size since we prune
             cb = len(lines)
-            nr = torch.zeros(( cb * p.shape[-1], 2 ))
+            nr = torch.zeros(( cb * p.shape[-1], 2 )).to(device)
             for i in range(cb):
-                cand_padding_mask = torch.ones_like(lines[i]).unsqueeze(0).long()
+                cand_padding_mask = torch.ones_like(lines[i]).unsqueeze(0).long().to(device)
                 cand_padding_mask[:, step:] = 0
                 p = model.decode(lines[i][None, :], cand_padding_mask, src_encoded, src_padding_mask, T)
                 for j in range(p.shape[-1]):
@@ -101,14 +101,19 @@ def gen_beam(model, T, src, src_padding_mask,
         # one beam can have multiple candidates if they make the cut
         y = nr[nr[:, 0].argsort()] ; # sorted negative log_probs
 
-        new_beams = torch.zeros(beam_size, max_len).long()
-        new_beams_mask = torch.ones(beam_size, ).bool()
+        new_beams = torch.zeros(beam_size, max_len).long().to(device)
+        new_beams_mask = torch.ones(beam_size, ).bool().to(device)
         new_scores = []
 
         # taking top n_beams candidates...
         for i in range(beam_size):
             # mod to get remainder (actual token)
-            c = y[i, 1] % 100
+
+            # for debugging
+            if random.random() > 0.8:
+                c = eos_idx
+            else:
+                c = y[i, 1] % 100
             beamno = int( y[i, 1] ) // 100 # this how we track the beam no of the current candidate
 
             if c == eos_idx:
@@ -148,12 +153,13 @@ def gen_beam(model, T, src, src_padding_mask,
     final_lengths = final_lengths[final_beam_idx]
 
     if len(final_beams) == 0:
-        return
+        return None, None
 
     final_scores = final_scores / final_lengths
     final_beams = final_beams[final_scores.argsort()][:5]
     final_scores = final_scores.sort()[0]
-    
+
+    assert len(final_beams) == len(final_scores)
     return final_beams, final_scores
 
 
