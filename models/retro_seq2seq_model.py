@@ -2,10 +2,15 @@ import torch
 import torch.nn as nn
 import os
 from collections import OrderedDict
+
+import sys
+sys.path.append("./")
+
 from models.losses import masked_loss
 from metrics import masked_acc
 from models.archs import define_arch
-from generation.utils import gen_beam, tokenizer_from_vocab
+from generation.utils import gen_beam, tokenizer_from_vocab, suppress_stderr
+from rdkit import Chem
 
 class RetroSeq2SeqModel(nn.Module):
     def __init__(self, opt):
@@ -87,52 +92,78 @@ class RetroSeq2SeqModel(nn.Module):
             if num_text > 100:
                 break
 
+            lines = []     
             cnt += 1
             val_data = {k: v.to(self.device) for k, v in val_data.items()}
 
             # preprocessing should be in dataset class
             src = val_data["src"]
+            src_padding_mask = val_data["src_padding_mask"]
 
             for i in range(src.shape[0]):
-                answer = []
-                beams = []
 
-                try:
-                    beams = gen_beam(
-                        self.net, 
-                        self.T, 
-                        src[i],
-                        self.maxlen,
-                        self.tgt_char_to_idx,
-                        self.tgt_idx_to_char,
-                        self.src_char_to_idx,
-                        self.src_idx_to_char,
-                        self.beam_size
-                    )
-                except KeyboardInterrupt:
-                    return
-                except Exception as e:
-                    pass
+                product = "".join([self.src_idx_to_char[c] for c in list(val_data["src"][i].detach().cpu().numpy())])
+                reagents = "".join([self.src_idx_to_char[c] for c in list(val_data["tgt"][i].detach().cpu().numpy())])
+                
+                y_true = []
 
-                if len (beams) == 0:
+                reags_true = set(reagents.split("."))
+                sms_true = set()
+                with suppress_stderr():
+                    for r in reags_true:
+                        m = Chem.MolFromSmiles(r)
+                        if m is not None:
+                            sms_true.add(Chem.MolToSmiles(m))
+                    if len(sms):
+                        y_true = sorted(list(sms_true))
+
+                if len(y_true) == 0:
                     continue
+                
+                beams = gen_beam(
+                    self.net, 
+                    self.T, 
+                    src[None, i],
+                    src_padding_mask[None, i],
+                    self.maxlen,
+                    self.tgt_char_to_idx,
+                    self.tgt_idx_to_char,
+                    self.src_char_to_idx,
+                    self.src_idx_to_char,
+                    self.beam_size
+                )
 
-                answer_s = set(answer)
+                if len(beams) == 0:
+                    continue
+                
+                y_pred = []
+                for beam, score in beams:
+                    candidate = "".join([self.tgt_idx_to_char[c] for c in list(beam.detach().cpu().numpy())])
 
-                ans = []
-                for k in range(len(beams)):
-                    ans.append([ beams[k][0], beams[k][1] ])
+                    reags = set(candidate.split("."))
+                    sms = set()
 
-                for step, beam in enumerate(ans):
-                    right = answer_s.intersection(set(beam[0]))
+                    # normalizing the output
+                    with suppress_stderr():
+                        for r in reags:
+                            m = Chem.MolFromSmiles(r)
+                            if m is not None:
+                                sms.add(Chem.MolToSmiles(m))
+                        if len(sms):
+                            y_pred.append([sorted(list(sms)), score])
+                
+                y_s = set(y_true)
+
+                for step, beam in enumerate(y_pred):
+                    right = y_s.intersection(set(beam[0]))
 
                     if len(right) == 0: continue
-                    if len(right) == len(answer):
+                    if len(right) == len(y_true):
                         if step == 0:
                             ex_1 += 1
                             ex_3 += 1
                             ex_5 += 1
-                            print("CNT: ", cnt, ex_1 /cnt *100.0, answer, beam[1], beam[1] / len(".".join(answer)) , 1.0 )
+                            print("CNT: ", cnt, ex_1 /cnt *100.0, y_true, beam[1], beam[1] / len(".".join(y)) , 1.0 )
                             break
                         if step < 3:
                             ex_3 += 1
@@ -151,9 +182,6 @@ class RetroSeq2SeqModel(nn.Module):
 
             # restructure strings
             lines = []
-            
-            input_text = "".join([self.src_idx_to_char[c] for c in list(val_data["src"][i].detach().cpu().numpy())])
-            gold = "".join([self.src_idx_to_char[c] for c in list(val_data["tgt"][i].detach().cpu().numpy())])
 
             if len(beams) == 0:
                 pred_text = ""
@@ -162,7 +190,7 @@ class RetroSeq2SeqModel(nn.Module):
                 pred_text = "\n".join(pred_text)
 
             line = (
-                f"INPUT: {input_text}\n\nPRED: \n{pred_text}\n\nGOLD: {gold}\n"
+                f"INPUT: {product}\n\nPRED: \n{pred_text}\n\nGOLD: {reagents}\n"
                 "{}\n".format(30 * "-")
             )
             lines.append(line)

@@ -255,6 +255,8 @@ class AugmentedTransformer(nn.Module):
         super(AugmentedTransformer, self).__init__()
         self.embed_dim = embed_dim
         self.positional_encoding = PositionLayer(embed_dim, maxlen)
+        self.positional_encoding2 = GetPosEncodingMatrix(embed_dim, maxlen)
+
         self.src_mask = MaskLayerLeft(maxlen)
         self.src_vocab_embed = EmbeddingLayer(embed_dim, src_vocab_size)
         self.maxlen = maxlen
@@ -304,19 +306,15 @@ class AugmentedTransformer(nn.Module):
 
         return self.generator(output)
     
-    def encode(self, x, src_char_to_ix, src_idx_to_char):
-        
-        # src input will be a tensor
-        src, src_padding_mask, src_pos = gen_left(
-            [decode_to_string(x, src_idx_to_char)],
-            embed_dim=self.embed_dim,
-            src_char_to_ix=src_char_to_ix,
-            max_len=self.maxlen
-        )
+    def encode(self, src, src_padding_mask, **kwargs):
 
-        src = src.to(x.device)
-        src_padding_mask = src_padding_mask.to(x.device)
-        src_pos = src_pos.to(x.device)
+        bs, s_len = src.shape
+        
+        src_pos = torch.zeros(bs, s_len, self.embed_dim).to(src.device)
+        for i in range(bs):
+            src_i = src[i]
+            for j, s in enumerate(src_i):
+                src_pos[i, j] = self.positional_encoding2[j, :self.embed_dim]
 
         # positional encoding needs to be pre-computed
         src_mask = self.src_mask(src_padding_mask)
@@ -328,22 +326,19 @@ class AugmentedTransformer(nn.Module):
         for block in self.encoder:
             memory = block(memory, src_mask)
         
-        return self.encoder_norm(memory), src_padding_mask
+        return self.encoder_norm(memory)
     
-    def decode(self, y, memory, src_padding_mask, 
-               tgt_char_to_idx, tgt_idx_to_char, T=1.0):
+    def decode(self, tgt, tgt_padding_mask, 
+               memory, src_padding_mask, T=1.0, **kwargs):
 
-        tgt, tgt_padding_mask, tgt_pos = gen_right(
-            [y],
-            embed_dim=self.embed_dim,
-            tgt_char_to_ix=tgt_char_to_idx,
-            max_len=self.maxlen
-        )
+        bs, t_len = tgt.shape
+
+        tgt_pos = torch.zeros(bs, t_len, self.embed_dim).to(tgt.device)
+        for i in range(bs):
+            tgt_i = tgt[i]
+            for j, t in enumerate(tgt_i):
+                tgt_pos[i, j] = self.positional_encoding2[j, :self.embed_dim]
         
-        tgt = tgt.to(memory.device)
-        tgt_padding_mask = tgt_padding_mask.to(memory.device)
-        tgt_pos = tgt_pos.to(memory.device)
-
         memory_mask = self.memory_mask([tgt_padding_mask, src_padding_mask])
 
         tgt_mask = self.tgt_mask(tgt_padding_mask)
@@ -357,13 +352,13 @@ class AugmentedTransformer(nn.Module):
 
         output = self.generator(self.decoder_norm(output))
         # taking the final token
-        prob = output[0, len(y), :] / T
+        prob = output[0, tgt.shape[-1] - 1, :] / T
         # softmax
         prob = torch.exp(prob) / torch.sum(torch.exp(prob))
         return prob
 
 
-def GetPosEncodingMatrix(max_len, embed_dim):
+def GetPosEncodingMatrix(embed_dim, max_len):
     pos_enc = torch.Tensor([
         [pos / math.pow(10000, 2 * (j // 2) / embed_dim) for j in range(embed_dim)]
         for pos in range(max_len)
