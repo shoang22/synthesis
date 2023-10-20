@@ -110,10 +110,7 @@ def gen_beam(model, T, src, src_padding_mask,
             # mod to get remainder (actual token)
 
             # for debugging
-            if random.random() > 0.8:
-                c = eos_idx
-            else:
-                c = y[i, 1] % 100
+            c = y[i, 1] % 100
             beamno = int( y[i, 1] ) // 100 # this how we track the beam no of the current candidate
 
             if c == eos_idx:

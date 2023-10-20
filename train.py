@@ -152,6 +152,7 @@ class Trainer:
 
                 for tag, value in self.bare_model.get_net_parameters():
                     if value.grad is not None:
+                        self.logger.info(f"grad: {value.grad.cpu()}")
                         self.writer.add_histogram("grad/" + tag, value.grad.cpu(), epoch)
 
             
